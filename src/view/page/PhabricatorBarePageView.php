@@ -61,7 +61,7 @@ class PhabricatorBarePageView extends AphrontPageView {
   protected function getHead() {
     $framebust = null;
     if (!$this->getFrameable()) {
-      $framebust = '(top == self) || top.location.replace(self.location.href);';
+      $framebust = ''; //'(top == self) || top.location.replace(self.location.href);';
     }
 
     $viewport_tag = null;

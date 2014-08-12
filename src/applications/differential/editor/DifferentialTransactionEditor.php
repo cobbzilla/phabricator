@@ -7,6 +7,14 @@ final class DifferentialTransactionEditor
   private $changedPriorToCommitURI;
   private $isCloseByCommit;
 
+  public function getEditorApplicationClass() {
+    return 'PhabricatorDifferentialApplication';
+  }
+
+  public function getEditorObjectsDescription() {
+    return pht('Differential Revisions');
+  }
+
   public function getDiffUpdateTransaction(array $xactions) {
     $type_update = DifferentialTransaction::TYPE_UPDATE;
 
@@ -98,6 +106,8 @@ final class DifferentialTransactionEditor
     PhabricatorLiskDAO $object,
     PhabricatorApplicationTransaction $xaction) {
 
+    $actor_phid = $this->getActingAsPHID();
+
     switch ($xaction->getTransactionType()) {
       case DifferentialTransaction::TYPE_INLINE:
         return $xaction->hasComment();
@@ -119,7 +129,6 @@ final class DifferentialTransactionEditor
             }
 
             $actor = $this->getActor();
-            $actor_phid = $actor->getPHID();
 
             // These transactions can cause effects in two ways: by altering the
             // status of an existing reviewer; or by adding the actor as a new
@@ -151,7 +160,6 @@ final class DifferentialTransactionEditor
           case DifferentialAction::ACTION_REQUEST:
             return ($object->getStatus() != $status_review);
           case DifferentialAction::ACTION_RESIGN:
-            $actor_phid = $this->getActor()->getPHID();
             foreach ($object->getReviewerStatus() as $reviewer) {
               if ($reviewer->getReviewerPHID() == $actor_phid) {
                 return true;
@@ -159,7 +167,6 @@ final class DifferentialTransactionEditor
             }
             return false;
           case DifferentialAction::ACTION_CLAIM:
-            $actor_phid = $this->getActor()->getPHID();
             return ($actor_phid != $object->getAuthorPHID());
         }
     }
@@ -231,7 +238,7 @@ final class DifferentialTransactionEditor
             $object->setStatus(ArcanistDifferentialRevisionStatus::CLOSED);
             return;
           case DifferentialAction::ACTION_CLAIM:
-            $object->setAuthorPHID($this->getActor()->getPHID());
+            $object->setAuthorPHID($this->getActingAsPHID());
             return;
         }
         break;
@@ -247,7 +254,7 @@ final class DifferentialTransactionEditor
     $results = parent::expandTransaction($object, $xaction);
 
     $actor = $this->getActor();
-    $actor_phid = $actor->getPHID();
+    $actor_phid = $this->getActingAsPHID();
     $type_edge = PhabricatorTransactions::TYPE_EDGE;
 
     $status_plan = ArcanistDifferentialRevisionStatus::CHANGES_PLANNED;
@@ -782,7 +789,7 @@ final class DifferentialTransactionEditor
     $action) {
 
     $author_phid = $revision->getAuthorPHID();
-    $actor_phid = $this->getActor()->getPHID();
+    $actor_phid = $this->getActingAsPHID();
     $actor_is_author = ($author_phid == $actor_phid);
 
     $config_abandon_key = 'differential.always-allow-abandon';
@@ -1191,6 +1198,25 @@ final class DifferentialTransactionEditor
     }
 
     return $body;
+  }
+
+  public function getMailTagsMap() {
+    return array(
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_REVIEW_REQUEST =>
+        pht('A revision is created.'),
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_UPDATED =>
+        pht('A revision is updated.'),
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_COMMENT =>
+        pht('Someone comments on a revision.'),
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_CLOSED =>
+        pht('A revision is closed.'),
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_REVIEWERS =>
+        pht("A revision's reviewers change."),
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_CC =>
+        pht("A revision's CCs change."),
+      MetaMTANotificationType::TYPE_DIFFERENTIAL_OTHER =>
+        pht('Other revision activity not listed above occurs.'),
+    );
   }
 
   protected function supportsSearch() {

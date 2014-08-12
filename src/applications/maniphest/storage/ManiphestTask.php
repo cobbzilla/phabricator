@@ -9,7 +9,8 @@ final class ManiphestTask extends ManiphestDAO
     PhrequentTrackableInterface,
     PhabricatorCustomFieldInterface,
     PhabricatorDestructibleInterface,
-    PhabricatorApplicationTransactionInterface {
+    PhabricatorApplicationTransactionInterface,
+    PhabricatorProjectInterface {
 
   const MARKUP_FIELD_DESCRIPTION = 'markup:desc';
 
@@ -159,6 +160,7 @@ final class ManiphestTask extends ManiphestDAO
     return array(
       $this->getPriority(),
       -$this->getSubpriority(),
+      $this->getID(),
     );
   }
 

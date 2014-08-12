@@ -29,10 +29,11 @@ JX.behavior('project-boards', function(config) {
     var vd = JX.Stratcom.getData(v).sort || [];
 
     for (var ii = 0; ii < ud.length; ii++) {
-      if (ud[ii] < vd[ii]) {
+
+      if (parseInt(ud[ii]) < parseInt(vd[ii])) {
         return 1;
       }
-      if (ud[ii] > vd[ii]) {
+      if (parseInt(ud[ii]) > parseInt(vd[ii])) {
         return -1;
       }
     }
@@ -80,6 +81,8 @@ JX.behavior('project-boards', function(config) {
       data.beforePHID = before_phid;
     }
 
+    data.order = config.order;
+
     var workflow = new JX.Workflow(config.moveURI, data)
       .setHandler(function(response) {
         onresponse(response, item, list);
@@ -108,10 +111,11 @@ JX.behavior('project-boards', function(config) {
     lists[ii].setGroup(lists);
   }
 
-  var onedit = function(card, column, r) {
+  var onedit = function(column, r) {
     var new_card = JX.$H(r.tasks).getNode();
     var new_data = JX.Stratcom.getData(new_card);
     var items = finditems(column);
+    var edited = false;
 
     for (var ii = 0; ii < items.length; ii++) {
       var item = items[ii];
@@ -122,9 +126,16 @@ JX.behavior('project-boards', function(config) {
       if (phid == new_data.objectPHID) {
         items[ii] = new_card;
         data = new_data;
+        edited = true;
       }
 
       data.sort = r.data.sortMap[data.objectPHID] || data.sort;
+    }
+
+    // this is an add then...!
+    if (!edited) {
+      items[items.length + 1] = new_card;
+      new_data.sort = r.data.sortMap[new_data.objectPHID] || new_data.sort;
     }
 
     items.sort(colsort);
@@ -137,26 +148,33 @@ JX.behavior('project-boards', function(config) {
     ['edit-project-card'],
     function(e) {
       e.kill();
-      var card = e.getNode('project-card');
       var column = e.getNode('project-column');
       var request_data = {
-        'responseType' : 'card',
-        'columnPHID'   : JX.Stratcom.getData(column).columnPHID };
+        responseType: 'card',
+        columnPHID: JX.Stratcom.getData(column).columnPHID,
+        order: config.order
+      };
       new JX.Workflow(e.getNode('tag:a').href, request_data)
-      .setHandler(JX.bind(null, onedit, card, column))
-      .start();
+        .setHandler(JX.bind(null, onedit, column))
+        .start();
     });
 
   JX.Stratcom.listen(
     'click',
     ['column-add-task'],
     function (e) {
-      e.kill();
+
+      // We want the 'boards-dropdown-menu' behavior to see this event and
+      // close the dropdown, but don't want to follow the link.
+      e.prevent();
+
       var column_phid = e.getNodeData('column-add-task').columnPHID;
       var request_data = {
-        'responseType' : 'card',
-        'columnPHID'   : column_phid,
-        'projects'     : config.projectPHID };
+        responseType: 'card',
+        columnPHID: column_phid,
+        projects: config.projectPHID,
+        order: config.order
+      };
       var cols = JX.DOM.scry(JX.$(config.boardID), 'ul', 'project-column');
       var ii;
       var column;
@@ -167,7 +185,7 @@ JX.behavior('project-boards', function(config) {
         }
       }
       new JX.Workflow(config.createURI, request_data)
-      .setHandler(JX.bind(null, onedit, null, column))
-      .start();
+        .setHandler(JX.bind(null, onedit, column))
+        .start();
     });
 });

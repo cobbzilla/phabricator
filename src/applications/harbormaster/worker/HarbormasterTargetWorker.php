@@ -35,6 +35,8 @@ final class HarbormasterTargetWorker extends HarbormasterWorker {
     $build = $target->getBuild();
     $viewer = $this->getViewer();
 
+    $target->setDateStarted(time());
+
     try {
       $status_pending = HarbormasterBuildTarget::STATUS_PENDING;
       if ($target->getTargetStatus() == $status_pending) {
@@ -51,11 +53,21 @@ final class HarbormasterTargetWorker extends HarbormasterWorker {
       }
 
       $target->setTargetStatus($next_status);
+
+      if ($target->isComplete()) {
+        $target->setDateCompleted(time());
+      }
+
       $target->save();
     } catch (PhabricatorWorkerYieldException $ex) {
       // If the target wants to yield, let that escape without further
       // processing. We'll resume after the task retries.
       throw $ex;
+    } catch (HarbormasterBuildFailureException $ex) {
+      // A build step wants to fail explicitly.
+      $target->setTargetStatus(HarbormasterBuildTarget::STATUS_FAILED);
+      $target->setDateCompleted(time());
+      $target->save();
     } catch (Exception $ex) {
       phlog($ex);
 
@@ -69,6 +81,7 @@ final class HarbormasterTargetWorker extends HarbormasterWorker {
       }
 
       $target->setTargetStatus(HarbormasterBuildTarget::STATUS_FAILED);
+      $target->setDateCompleted(time());
       $target->save();
     }
 

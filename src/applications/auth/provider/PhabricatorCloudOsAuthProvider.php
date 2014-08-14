@@ -21,7 +21,7 @@ final class PhabricatorCloudOsAuthProvider
 
     public function getAdapter() {
         if (!$this->adapter) {
-            $adapter = new PhutilAuthAdapterEmpty();
+            $adapter = new PhutilEmptyAuthAdapter();
             $adapter->setAdapterType('cloudos');
             $adapter->setAdapterDomain('self');
             $this->adapter = $adapter;

@@ -138,7 +138,8 @@ final class PhabricatorCloudOsAuthProvider
                 if (strlen($username) && $has_password) {
                     $account_id = $this->authenticate($username, $password);
                     if ($account_id != null) {
-                        return array($this->loadOrCreateAccount($account_id), $response);;
+                        $account = $this->loadOrCreateAccount($account_id);
+                        return array($account, $response);;
                     }
                 }
                 throw new Exception('Username or password was incorrect');
@@ -150,6 +151,11 @@ final class PhabricatorCloudOsAuthProvider
                 return array($account, $response);
             }
         }
+    }
+
+    protected function willSaveAccount(PhabricatorExternalAccount $account) {
+        parent::willSaveAccount($account);
+        $account->setApproved(true);
     }
 
     function handleResponse ($response) { //, $successmessage) {

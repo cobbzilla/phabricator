@@ -155,7 +155,7 @@ final class PhabricatorCloudOsAuthProvider
 
     protected function willSaveAccount(PhabricatorExternalAccount $account) {
         parent::willSaveAccount($account);
-        $account->setApproved(true);
+        $account->setIsApproved(1);
     }
 
     function handleResponse ($response) { //, $successmessage) {

@@ -4760,12 +4760,9 @@ phutil_register_library_map(array(
       'PhabricatorPolicyInterface',
     ),
     'PhabricatorChatLogQuery' => 'PhabricatorCursorPagedPolicyAwareQuery',
-<<<<<<< HEAD
-    'PhabricatorCloudOsAuthProvider' => 'PhabricatorAuthProvider',
-=======
     'PhabricatorChunkedFileStorageEngine' => 'PhabricatorFileStorageEngine',
+    'PhabricatorCloudOsAuthProvider' => 'PhabricatorAuthProvider',
     'PhabricatorClusterConfigOptions' => 'PhabricatorApplicationConfigOptions',
->>>>>>> b7fa55ff939697c633f995a4861e14f27935896c
     'PhabricatorCommitBranchesField' => 'PhabricatorCommitCustomField',
     'PhabricatorCommitCustomField' => 'PhabricatorCustomField',
     'PhabricatorCommitSearchEngine' => 'PhabricatorApplicationSearchEngine',

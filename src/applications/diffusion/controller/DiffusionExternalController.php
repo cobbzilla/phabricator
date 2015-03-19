@@ -2,16 +2,15 @@
 
 final class DiffusionExternalController extends DiffusionController {
 
-  public function willProcessRequest(array $data) {
-    // Don't build a DiffusionRequest.
-  }
-
   public function shouldAllowPublic() {
     return true;
   }
 
-  public function processRequest() {
-    $request = $this->getRequest();
+  protected function shouldLoadDiffusionRequest() {
+    return false;
+  }
+
+  protected function processDiffusionRequest(AphrontRequest $request) {
 
     $uri = $request->getStr('uri');
     $id  = $request->getStr('id');
@@ -70,9 +69,9 @@ final class DiffusionExternalController extends DiffusionController {
       }
       $desc .= $id;
 
-      $content = id(new AphrontErrorView())
+      $content = id(new PHUIInfoView())
         ->setTitle(pht('Unknown External'))
-        ->setSeverity(AphrontErrorView::SEVERITY_WARNING)
+        ->setSeverity(PHUIInfoView::SEVERITY_WARNING)
         ->appendChild(phutil_tag(
           'p',
           array(),
@@ -125,10 +124,14 @@ final class DiffusionExternalController extends DiffusionController {
           'wide',
         ));
 
-      $content = new AphrontPanelView();
-      $content->setHeader(pht('Multiple Matching Commits'));
-      $content->setCaption(
-        pht('This external reference matches multiple known commits.'));
+      $caption = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_NOTICE)
+        ->appendChild(
+          pht('This external reference matches multiple known commits.'));
+
+      $content = new PHUIObjectBoxView();
+      $content->setHeaderText(pht('Multiple Matching Commits'));
+      $content->setInfoView($caption);
       $content->appendChild($table);
     }
 

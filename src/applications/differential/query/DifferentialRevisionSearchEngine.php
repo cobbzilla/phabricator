@@ -200,7 +200,7 @@ final class DifferentialRevisionSearchEngine
     return '/differential/'.$path;
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     $names = array();
 
     if ($this->requireViewer()->isLoggedIn()) {
@@ -261,7 +261,8 @@ final class DifferentialRevisionSearchEngine
 
     $viewer = $this->requireViewer();
     $template = id(new DifferentialRevisionListView())
-      ->setUser($viewer);
+      ->setUser($viewer)
+      ->setNoBox($this->isPanelContext());
 
     $views = array();
     if ($query->getQueryKey() == 'active') {

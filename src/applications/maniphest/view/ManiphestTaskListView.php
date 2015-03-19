@@ -6,6 +6,7 @@ final class ManiphestTaskListView extends ManiphestView {
   private $handles;
   private $showBatchControls;
   private $showSubpriorityControls;
+  private $noDataString;
 
   public function setTasks(array $tasks) {
     assert_instances_of($tasks, 'ManiphestTask');
@@ -29,6 +30,11 @@ final class ManiphestTaskListView extends ManiphestView {
     return $this;
   }
 
+  public function setNoDataString($text) {
+    $this->noDataString = $text;
+    return $this;
+  }
+
   public function render() {
     $handles = $this->handles;
 
@@ -36,6 +42,12 @@ final class ManiphestTaskListView extends ManiphestView {
 
     $list = new PHUIObjectItemListView();
     $list->setFlush(true);
+
+    if ($this->noDataString) {
+      $list->setNoDataString($this->noDataString);
+    } else {
+      $list->setNoDataString(pht('No tasks.'));
+    }
 
     $status_map = ManiphestTaskStatus::getTaskStatusMap();
     $color_map = ManiphestTaskPriority::getColorMap();
@@ -90,11 +102,15 @@ final class ManiphestTaskListView extends ManiphestView {
         ));
 
       if ($this->showBatchControls) {
+        $href = new PhutilURI('/maniphest/task/edit/'.$task->getID().'/');
+        if (!$this->showSubpriorityControls) {
+          $href->setQueryParam('ungrippable', 'true');
+        }
         $item->addAction(
           id(new PHUIListItemView())
             ->setIcon('fa-pencil')
             ->addSigil('maniphest-edit-task')
-            ->setHref('/maniphest/task/edit/'.$task->getID().'/'));
+            ->setHref($href));
       }
 
       $list->addItem($item);

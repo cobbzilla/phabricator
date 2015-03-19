@@ -13,12 +13,34 @@ final class PhabricatorAuthSession extends PhabricatorAuthDAO
   protected $sessionExpires;
   protected $highSecurityUntil;
   protected $isPartial;
+  protected $signedLegalpadDocuments;
 
   private $identityObject = self::ATTACHABLE;
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_TIMESTAMPS => false,
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'type' => 'text32',
+        'sessionKey' => 'bytes40',
+        'sessionStart' => 'epoch',
+        'sessionExpires' => 'epoch',
+        'highSecurityUntil' => 'epoch?',
+        'isPartial' => 'bool',
+        'signedLegalpadDocuments' => 'bool',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'sessionKey' => array(
+          'columns' => array('sessionKey'),
+          'unique' => true,
+        ),
+        'key_identity' => array(
+          'columns' => array('userPHID', 'type'),
+        ),
+        'key_expires' => array(
+          'columns' => array('sessionExpires'),
+        ),
+      ),
     ) + parent::getConfiguration();
   }
 

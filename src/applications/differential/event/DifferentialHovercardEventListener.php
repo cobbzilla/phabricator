@@ -56,20 +56,19 @@ final class DifferentialHovercardEventListener
     $hovercard->addField(pht('Author'),
       $handles[$rev->getAuthorPHID()]->renderLink());
 
-    $hovercard->addField(pht('Date'),
-      phabricator_datetime($rev->getDateModified(), $viewer));
-
     $hovercard->addField(pht('Reviewers'),
       implode_selected_handle_links(', ', $handles, $reviewer_phids));
 
     if ($tasks) {
-      $hovercard->addField(pht('Task(s)', count($tasks)),
+      $hovercard->addField(pht('%s Task(s)', new PhutilNumber(count($tasks))),
         implode_selected_handle_links(', ', $handles, $tasks));
     }
 
     if ($rev->getSummary()) {
       $hovercard->addField(pht('Summary'),
-        phutil_utf8_shorten($rev->getSummary(), 120));
+        id(new PhutilUTF8StringTruncator())
+        ->setMaximumGlyphs(120)
+        ->truncateString($rev->getSummary()));
     }
 
     $hovercard->addTag(

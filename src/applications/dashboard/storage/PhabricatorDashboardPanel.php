@@ -6,8 +6,10 @@
 final class PhabricatorDashboardPanel
   extends PhabricatorDashboardDAO
   implements
+    PhabricatorApplicationTransactionInterface,
     PhabricatorPolicyInterface,
-    PhabricatorCustomFieldInterface {
+    PhabricatorCustomFieldInterface,
+    PhabricatorDestructibleInterface {
 
   protected $name;
   protected $panelType;
@@ -36,11 +38,16 @@ final class PhabricatorDashboardPanel
     return $dst;
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
         'properties' => self::SERIALIZATION_JSON,
+      ),
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'name' => 'text255',
+        'panelType' => 'text64',
+        'isArchived' => 'bool',
       ),
     ) + parent::getConfiguration();
   }
@@ -80,6 +87,29 @@ final class PhabricatorDashboardPanel
           $this->getPanelType()));
     }
     return $impl;
+  }
+
+
+/* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
+
+
+  public function getApplicationTransactionEditor() {
+    return new PhabricatorDashboardPanelTransactionEditor();
+  }
+
+  public function getApplicationTransactionObject() {
+    return $this;
+  }
+
+  public function getApplicationTransactionTemplate() {
+    return new PhabricatorDashboardPanelTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    return $timeline;
   }
 
 
@@ -129,6 +159,18 @@ final class PhabricatorDashboardPanel
   public function attachCustomFields(PhabricatorCustomFieldAttachment $fields) {
     $this->customFields = $fields;
     return $this;
+  }
+
+
+/* -(  PhabricatorDestructibleInterface  )----------------------------------- */
+
+
+  public function destroyObjectPermanently(
+    PhabricatorDestructionEngine $engine) {
+
+    $this->openTransaction();
+      $this->delete();
+    $this->saveTransaction();
   }
 
 }

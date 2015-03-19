@@ -1,7 +1,10 @@
 <?php
 
 final class DivinerLiveSymbol extends DivinerDAO
-  implements PhabricatorPolicyInterface, PhabricatorMarkupInterface {
+  implements
+    PhabricatorPolicyInterface,
+    PhabricatorMarkupInterface,
+    PhabricatorDestructibleInterface {
 
   protected $bookPHID;
   protected $context;
@@ -23,10 +26,58 @@ final class DivinerLiveSymbol extends DivinerDAO
   private $extends = self::ATTACHABLE;
   private $children = self::ATTACHABLE;
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_TIMESTAMPS => false,
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'context' => 'text255?',
+        'type' => 'text32',
+        'name' => 'text255',
+        'atomIndex' => 'uint32',
+        'identityHash' => 'bytes12',
+        'graphHash' => 'text64?',
+        'title' => 'text?',
+        'titleSlugHash' => 'bytes12?',
+        'groupName' => 'text255?',
+        'summary' => 'text?',
+        'isDocumentable' => 'bool',
+        'nodeHash' => 'text64?',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_phid' => null,
+        'identityHash' => array(
+          'columns' => array('identityHash'),
+          'unique' => true,
+        ),
+        'phid' => array(
+          'columns' => array('phid'),
+          'unique' => true,
+        ),
+        'graphHash' => array(
+          'columns' => array('graphHash'),
+          'unique' => true,
+        ),
+        'nodeHash' => array(
+          'columns' => array('nodeHash'),
+          'unique' => true,
+        ),
+        'bookPHID' => array(
+          'columns' => array(
+            'bookPHID',
+            'type',
+            'name(64)',
+            'context(64)',
+            'atomIndex',
+          ),
+        ),
+        'name' => array(
+          'columns' => array('name(64)'),
+        ),
+        'key_slug' => array(
+          'columns' => array('titleSlugHash'),
+        ),
+      ),
     ) + parent::getConfiguration();
   }
 
@@ -192,6 +243,24 @@ final class DivinerLiveSymbol extends DivinerDAO
 
   public function shouldUseMarkupCache($field) {
     return true;
+  }
+
+/* -(  PhabricatorDestructibleInterface  )----------------------------------- */
+
+  public function destroyObjectPermanently(
+    PhabricatorDestructionEngine $engine) {
+
+    $this->openTransaction();
+      $conn_w = $this->establishConnection('w');
+
+      queryfx(
+        $conn_w,
+        'DELETE FROM %T WHERE symbolPHID = %s',
+        id(new DivinerLiveAtom())->getTableName(),
+        $this->getPHID());
+
+      $this->delete();
+    $this->saveTransaction();
   }
 
 }

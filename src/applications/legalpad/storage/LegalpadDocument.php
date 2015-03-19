@@ -18,8 +18,10 @@ final class LegalpadDocument extends LegalpadDAO
   protected $mailKey;
   protected $signatureType;
   protected $preamble;
+  protected $requireSignature;
 
-  const SIGNATURE_TYPE_INDIVIDUAL = 'user';
+  const SIGNATURE_TYPE_NONE        = 'none';
+  const SIGNATURE_TYPE_INDIVIDUAL  = 'user';
   const SIGNATURE_TYPE_CORPORATION = 'corp';
 
   private $documentBody = self::ATTACHABLE;
@@ -44,15 +46,33 @@ final class LegalpadDocument extends LegalpadDAO
       ->attachSignatures(array())
       ->setSignatureType(self::SIGNATURE_TYPE_INDIVIDUAL)
       ->setPreamble('')
+      ->setRequireSignature(0)
       ->setViewPolicy($view_policy)
       ->setEditPolicy($edit_policy);
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
         'recentContributorPHIDs' => self::SERIALIZATION_JSON,
+      ),
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'title' => 'text255',
+        'contributorCount' => 'uint32',
+        'versions' => 'uint32',
+        'mailKey' => 'bytes20',
+        'signatureType' => 'text4',
+        'preamble' => 'text',
+        'requireSignature' => 'bool',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_creator' => array(
+          'columns' => array('creatorPHID', 'dateModified'),
+        ),
+        'key_required' => array(
+          'columns' => array('requireSignature', 'dateModified'),
+        ),
       ),
     ) + parent::getConfiguration();
   }
@@ -115,6 +135,7 @@ final class LegalpadDocument extends LegalpadDAO
     return array(
       self::SIGNATURE_TYPE_INDIVIDUAL => pht('Individuals'),
       self::SIGNATURE_TYPE_CORPORATION => pht('Corporations'),
+      self::SIGNATURE_TYPE_NONE => pht('No One'),
     );
   }
 
@@ -126,6 +147,7 @@ final class LegalpadDocument extends LegalpadDAO
   public function getSignatureTypeIcon() {
     $type = $this->getSignatureType();
     $map = array(
+      self::SIGNATURE_TYPE_NONE => '',
       self::SIGNATURE_TYPE_INDIVIDUAL => 'fa-user grey',
       self::SIGNATURE_TYPE_CORPORATION => 'fa-building-o grey',
     );
@@ -198,6 +220,13 @@ final class LegalpadDocument extends LegalpadDAO
 
   public function getApplicationTransactionTemplate() {
     return new LegalpadTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    return $timeline;
   }
 
 

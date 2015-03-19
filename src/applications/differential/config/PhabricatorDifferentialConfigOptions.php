@@ -11,6 +11,14 @@ final class PhabricatorDifferentialConfigOptions
     return pht('Configure Differential code review.');
   }
 
+  public function getFontIcon() {
+    return 'fa-cog';
+  }
+
+  public function getGroup() {
+    return 'apps';
+  }
+
   public function getOptions() {
     $custom_field_type = 'custom:PhabricatorCustomFieldConfigOptionType';
 
@@ -232,12 +240,14 @@ final class PhabricatorDifferentialConfigOptions
         'metamta.differential.reply-handler-domain',
         'string',
         null)
+        ->setLocked(true)
         ->setDescription(
           pht('Inbound email domain for Differential replies.')),
       $this->newOption(
         'metamta.differential.reply-handler',
         'class',
         'DifferentialReplyHandler')
+        ->setLocked(true)
         ->setBaseClass('PhabricatorMailReplyHandler')
         ->setDescription(pht('Alternate reply handler class.')),
       $this->newOption(
@@ -293,7 +303,7 @@ final class PhabricatorDifferentialConfigOptions
           pht(
             'Normally, inline comments in emails are shown with a file and '.
             'line but without any diff context. Enabling this option adds '.
-            'diff context.')),
+            'diff context and the comment thread.')),
     );
   }
 

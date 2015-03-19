@@ -20,11 +20,11 @@ final class ConpherenceReplyHandler extends PhabricatorMailReplyHandler {
 
   public function getPrivateReplyHandlerEmailAddress(
     PhabricatorObjectHandle $handle) {
-    return $this->getDefaultPrivateReplyHandlerEmailAddress($handle, 'E');
+    return $this->getDefaultPrivateReplyHandlerEmailAddress($handle, 'Z');
   }
 
   public function getPublicReplyHandlerEmailAddress() {
-    return $this->getDefaultPublicReplyHandlerEmailAddress('E');
+    return $this->getDefaultPublicReplyHandlerEmailAddress('Z');
   }
 
   public function getReplyHandlerInstructions() {
@@ -43,7 +43,7 @@ final class ConpherenceReplyHandler extends PhabricatorMailReplyHandler {
         ->attachParticipants(array())
         ->attachFilePHIDs(array());
     } else {
-      $edge_type = PhabricatorEdgeConfig::TYPE_OBJECT_HAS_FILE;
+      $edge_type = PhabricatorObjectHasFileEdgeType::EDGECONST;
       $file_phids = PhabricatorEdgeQuery::loadDestinationPHIDs(
         $conpherence->getPHID(),
         $edge_type);

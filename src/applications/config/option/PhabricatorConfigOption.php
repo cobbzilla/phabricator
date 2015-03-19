@@ -14,8 +14,8 @@ final class PhabricatorConfigOption
   private $group;
   private $examples;
   private $locked;
+  private $lockedMessage;
   private $hidden;
-  private $masked;
   private $baseClass;
   private $customData;
   private $customObject;
@@ -27,26 +27,6 @@ final class PhabricatorConfigOption
 
   public function getBaseClass() {
     return $this->baseClass;
-  }
-
-  public function setMasked($masked) {
-    $this->masked = $masked;
-    return $this;
-  }
-
-  public function getMasked() {
-    if ($this->masked) {
-      return true;
-    }
-
-    if ($this->getHidden()) {
-      return true;
-    }
-
-    return idx(
-      PhabricatorEnv::getEnvConfig('config.mask'),
-      $this->getKey(),
-      false);
   }
 
   public function setHidden($hidden) {
@@ -83,6 +63,20 @@ final class PhabricatorConfigOption
       PhabricatorEnv::getEnvConfig('config.lock'),
       $this->getKey(),
       false);
+  }
+
+  public function setLockedMessage($message) {
+    $this->lockedMessage = $message;
+    return $this;
+  }
+
+  public function getLockedMessage() {
+    if ($this->lockedMessage !== null) {
+      return $this->lockedMessage;
+    }
+    return pht(
+      'This configuration is locked and can not be edited from the web '.
+      'interface. Use `./bin/config` in `phabricator/` to edit it.');
   }
 
   public function addExample($value, $description) {

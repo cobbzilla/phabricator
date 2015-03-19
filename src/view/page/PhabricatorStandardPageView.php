@@ -15,6 +15,17 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
   private $disableConsole;
   private $pageObjects = array();
   private $applicationMenu;
+  private $showFooter = true;
+  private $showDurableColumn = true;
+
+  public function setShowFooter($show_footer) {
+    $this->showFooter = $show_footer;
+    return $this;
+  }
+
+  public function getShowFooter() {
+    return $this->showFooter;
+  }
 
   public function setApplicationMenu(PHUIListView $application_menu) {
     $this->applicationMenu = $application_menu;
@@ -63,16 +74,52 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     }
   }
 
-  public function getTitle() {
-    $use_glyph = true;
+  public function setShowDurableColumn($show) {
+    $this->showDurableColumn = $show;
+    return $this;
+  }
 
+  public function getShowDurableColumn() {
     $request = $this->getRequest();
-    if ($request) {
-      $user = $request->getUser();
-      if ($user && $user->loadPreferences()->getPreference(
-            PhabricatorUserPreferences::PREFERENCE_TITLES) !== 'glyph') {
-        $use_glyph = false;
+    if (!$request) {
+      return false;
+    }
+
+    $viewer = $request->getUser();
+    if (!$viewer->isLoggedIn()) {
+      return false;
+    }
+
+    $conpherence_installed = PhabricatorApplication::isClassInstalledForViewer(
+      'PhabricatorConpherenceApplication',
+      $viewer);
+    if (!$conpherence_installed) {
+      return false;
+    }
+
+    $patterns = $this->getQuicksandURIPatternBlacklist();
+    $path = $request->getRequestURI()->getPath();
+    foreach ($patterns as $pattern) {
+      if (preg_match('(^'.$pattern.'$)', $path)) {
+        return false;
       }
+    }
+
+    return true;
+  }
+
+  public function getDurableColumnVisible() {
+    $column_key = PhabricatorUserPreferences::PREFERENCE_CONPHERENCE_COLUMN;
+    return (bool)$this->getUserPreference($column_key, 0);
+  }
+
+
+  public function getTitle() {
+    $glyph_key = PhabricatorUserPreferences::PREFERENCE_TITLES;
+    if ($this->getUserPreference($glyph_key) == 'text') {
+      $use_glyph = false;
+    } else {
+      $use_glyph = true;
     }
 
     $title = parent::getTitle();
@@ -113,6 +160,7 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     require_celerity_resource('phui-form-css');
     require_celerity_resource('sprite-gradient-css');
     require_celerity_resource('phabricator-standard-page-view');
+    require_celerity_resource('conpherence-durable-column-view');
 
     Javelin::initBehavior('workflow', array());
 
@@ -149,7 +197,6 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
 
     Javelin::initBehavior('aphront-form-disable-on-submit');
     Javelin::initBehavior('toggle-class', array());
-    Javelin::initBehavior('konami', array());
     Javelin::initBehavior('history-install');
     Javelin::initBehavior('phabricator-gesture');
 
@@ -249,17 +296,31 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
 
     $response = CelerityAPI::getStaticResourceResponse();
 
+    $font_css = null;
+    if (!empty($monospaced)) {
+      $font_css = hsprintf(
+        '<style type="text/css">'.
+        '.PhabricatorMonospaced, '.
+        '.phabricator-remarkup .remarkup-code-block '.
+          '.remarkup-code { font: %s !important; } '.
+        '</style>', $monospaced);
+    }
+
+    $font_css_win = null;
+    if (!empty($monospaced_win)) {
+      $font_css_win = hsprintf(
+        '<style type="text/css">'.
+        '.platform-windows .PhabricatorMonospaced, '.
+        '.platform-windows .phabricator-remarkup '.
+          '.remarkup-code-block .remarkup-code { font: %s !important; }'.
+        '</style>', $monospaced_win);
+    }
+
     return hsprintf(
-      '%s<style type="text/css">'.
-      '.PhabricatorMonospaced, '.
-      '.phabricator-remarkup .remarkup-code-block { font: %s; } '.
-      '.platform-windows .PhabricatorMonospaced, '.
-      '.platform-windows .phabricator-remarkup '.
-        '.remarkup-code-block { font: %s; }'.
-      '</style>%s',
+      '%s%s%s%s',
       parent::getHead(),
-      phutil_safe_html($monospaced),
-      phutil_safe_html($monospaced_win),
+      $font_css,
+      $font_css_win,
       $response->renderSingleResource('javelin-magical-init', 'phabricator'));
   }
 
@@ -290,8 +351,6 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
   }
 
   protected function getBody() {
-    $console = $this->getConsole();
-
     $user = null;
     $request = $this->getRequest();
     if ($request) {
@@ -316,7 +375,7 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     // Render the "you have unresolved setup issues..." warning.
     $setup_warning = null;
     if ($user && $user->getIsAdmin()) {
-      $open = PhabricatorSetupCheck::getOpenSetupIssueCount();
+      $open = PhabricatorSetupCheck::getOpenSetupIssueKeys();
       if ($open) {
         $setup_warning = phutil_tag_div(
           'setup-warning-callout',
@@ -324,28 +383,71 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
             'a',
             array(
               'href' => '/config/issue/',
+              'title' => implode(', ', $open),
             ),
-            pht('You have %d unresolved setup issue(s)...', $open)));
+            pht('You have %d unresolved setup issue(s)...', count($open))));
       }
     }
 
-    return
-      phutil_tag(
-        'div',
-        array(
-          'id' => 'base-page',
-          'class' => 'phabricator-standard-page',
-        ),
-        array(
-          $developer_warning,
-          $setup_warning,
-          $header_chrome,
-          phutil_tag_div('phabricator-standard-page-body', array(
-            ($console ? hsprintf('<darkconsole />') : null),
-            parent::getBody(),
-            phutil_tag('div', array('style' => 'clear: both;')),
-          )),
-        ));
+    Javelin::initBehavior(
+      'scrollbar',
+      array(
+        'nodeID' => 'phabricator-standard-page',
+        'isMainContent' => true,
+      ));
+
+    $main_page = phutil_tag(
+      'div',
+      array(
+        'id' => 'phabricator-standard-page',
+        'class' => 'phabricator-standard-page',
+      ),
+      array(
+        $developer_warning,
+        $setup_warning,
+        $header_chrome,
+        phutil_tag(
+          'div',
+          array(
+            'id' => 'phabricator-standard-page-body',
+            'class' => 'phabricator-standard-page-body',
+          ),
+          $this->renderPageBodyContent()),
+      ));
+
+    $durable_column = null;
+    if ($this->getShowDurableColumn()) {
+      $is_visible = $this->getDurableColumnVisible();
+      $durable_column = id(new ConpherenceDurableColumnView())
+        ->setSelectedConpherence(null)
+        ->setUser($user)
+        ->setVisible($is_visible)
+        ->setInitialLoad(true);
+    }
+
+    Javelin::initBehavior('quicksand-blacklist', array(
+      'patterns' => $this->getQuicksandURIPatternBlacklist(),
+    ));
+
+    return phutil_tag(
+      'div',
+      array(
+        'class' => 'main-page-frame',
+      ),
+      array(
+        $main_page,
+        $durable_column,
+      ));
+  }
+
+  private function renderPageBodyContent() {
+    $console = $this->getConsole();
+
+    return array(
+      ($console ? hsprintf('<darkconsole />') : null),
+      parent::getBody(),
+      $this->renderFooter(),
+    );
   }
 
   protected function getTail() {
@@ -361,9 +463,6 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
     if (PhabricatorEnv::getEnvConfig('notification.enabled')) {
       if ($user && $user->isLoggedIn()) {
 
-        $aphlict_object_id = celerity_generate_unique_node_id();
-        $aphlict_container_id = celerity_generate_unique_node_id();
-
         $client_uri = PhabricatorEnv::getEnvConfig('notification.client-uri');
         $client_uri = new PhutilURI($client_uri);
         if ($client_uri->getDomain() == 'localhost') {
@@ -372,37 +471,24 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
           $client_uri->setDomain($this_host->getDomain());
         }
 
-        $map = CelerityResourceMap::getNamedInstance('phabricator');
-        $swf_uri = $response->getURI($map, 'rsrc/swf/aphlict.swf', true);
-
-        $enable_debug = PhabricatorEnv::getEnvConfig('notification.debug');
-
         $subscriptions = $this->pageObjects;
         if ($user) {
           $subscriptions[] = $user->getPHID();
         }
 
+        if ($request->isHTTPS()) {
+          $client_uri->setProtocol('wss');
+        } else {
+          $client_uri->setProtocol('ws');
+        }
+
         Javelin::initBehavior(
           'aphlict-listen',
           array(
-            'id'            => $aphlict_object_id,
-            'containerID'   => $aphlict_container_id,
-            'server'        => $client_uri->getDomain(),
-            'port'          => $client_uri->getPort(),
-            'debug'         => $enable_debug,
-            'swfURI'        => $swf_uri,
+            'websocketURI'  => (string)$client_uri,
             'pageObjects'   => array_fill_keys($this->pageObjects, true),
             'subscriptions' => $subscriptions,
           ));
-
-        $tail[] = phutil_tag(
-          'div',
-          array(
-            'id' => $aphlict_container_id,
-            'style' =>
-              'position: absolute; width: 0; height: 0; overflow: hidden;',
-          ),
-          '');
       }
     }
 
@@ -455,6 +541,89 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView {
       return null;
     }
     return $this->getRequest()->getApplicationConfiguration()->getConsole();
+  }
+
+  private function renderFooter() {
+    if (!$this->getShowChrome()) {
+      return null;
+    }
+
+    if (!$this->getShowFooter()) {
+      return null;
+    }
+
+    $items = PhabricatorEnv::getEnvConfig('ui.footer-items');
+    if (!$items) {
+      return null;
+    }
+
+    $foot = array();
+    foreach ($items as $item) {
+      $name = idx($item, 'name', pht('Unnamed Footer Item'));
+
+      $href = idx($item, 'href');
+      if (!PhabricatorEnv::isValidWebResource($href)) {
+        $href = null;
+      }
+
+      if ($href !== null) {
+        $tag = 'a';
+      } else {
+        $tag = 'span';
+      }
+
+      $foot[] = phutil_tag(
+        $tag,
+        array(
+          'href' => $href,
+        ),
+        $name);
+    }
+    $foot = phutil_implode_html(" \xC2\xB7 ", $foot);
+
+    return phutil_tag(
+      'div',
+      array(
+        'class' => 'phabricator-standard-page-footer grouped',
+      ),
+      $foot);
+  }
+
+  public function renderForQuicksand() {
+    // TODO: We could run a lighter version of this and skip some work. In
+    // particular, we end up including many redundant resources.
+    $this->willRenderPage();
+    $response = $this->renderPageBodyContent();
+    $response = $this->willSendResponse($response);
+
+    return array(
+      'content' => hsprintf('%s', $response),
+    );
+  }
+
+  private function getQuicksandURIPatternBlacklist() {
+    $applications = PhabricatorApplication::getAllApplications();
+
+    $blacklist = array();
+    foreach ($applications as $application) {
+      $blacklist[] = $application->getQuicksandURIPatternBlacklist();
+    }
+
+    return array_mergev($blacklist);
+  }
+
+  private function getUserPreference($key, $default = null) {
+    $request = $this->getRequest();
+    if (!$request) {
+      return $default;
+    }
+
+    $user = $request->getUser();
+    if (!$user) {
+      return $default;
+    }
+
+    return $user->loadPreferences()->getPreference($key, $default);
   }
 
 }

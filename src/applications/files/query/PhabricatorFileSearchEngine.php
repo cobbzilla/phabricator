@@ -25,8 +25,12 @@ final class PhabricatorFileSearchEngine
   }
 
   public function buildQueryFromSavedQuery(PhabricatorSavedQuery $saved) {
-    $query = id(new PhabricatorFileQuery())
-      ->withAuthorPHIDs($saved->getParameter('authorPHIDs', array()));
+    $query = id(new PhabricatorFileQuery());
+
+    $author_phids = $saved->getParameter('authorPHIDs', array());
+    if ($author_phids) {
+      $query->withAuthorPHIDs($author_phids);
+    }
 
     if ($saved->getParameter('explicit')) {
       $query->showOnlyExplicitUploads(true);
@@ -86,7 +90,7 @@ final class PhabricatorFileSearchEngine
     return '/file/'.$path;
   }
 
-  public function getBuiltinQueryNames() {
+  protected function getBuiltinQueryNames() {
     $names = array();
 
     if ($this->requireViewer()->isLoggedIn()) {
@@ -170,6 +174,10 @@ final class PhabricatorFileSearchEngine
       $ttl = $file->getTTL();
       if ($ttl !== null) {
         $item->addIcon('blame', pht('Temporary'));
+      }
+
+      if ($file->getIsPartial()) {
+        $item->addIcon('fa-exclamation-triangle orange', pht('Partial'));
       }
 
       if (isset($highlighted_ids[$id])) {

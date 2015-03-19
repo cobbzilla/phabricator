@@ -6,13 +6,12 @@ final class DiffusionLintController extends DiffusionController {
     return true;
   }
 
-  public function processRequest() {
-    $request = $this->getRequest();
-    $user = $this->getRequest()->getUser();
+  protected function processDiffusionRequest(AphrontRequest $request) {
+    $user = $request->getUser();
     $drequest = $this->diffusionRequest;
 
     if ($request->getStr('lint') !== null) {
-      $controller = new DiffusionLintDetailsController($request);
+      $controller = new DiffusionLintDetailsController();
       $controller->setDiffusionRequest($drequest);
       $controller->setCurrentApplication($this->getCurrentApplication());
       return $this->delegateToController($controller);
@@ -105,7 +104,6 @@ final class DiffusionLintController extends DiffusionController {
 
     $content = array();
 
-    $link = null;
     if (!$this->diffusionRequest) {
       $form = id(new AphrontFormView())
         ->setUser($user)
@@ -123,9 +121,8 @@ final class DiffusionLintController extends DiffusionController {
       $content[] = id(new AphrontListFilterView())->appendChild($form);
     }
 
-    $content[] = id(new AphrontPanelView())
-      ->setNoBackground(true)
-      ->setCaption($link)
+    $content[] = id(new PHUIObjectBoxView())
+      ->setHeaderText(pht('Lint'))
       ->appendChild($table);
 
     $title = array('Lint');
@@ -172,7 +169,6 @@ final class DiffusionLintController extends DiffusionController {
       ),
       array(
         'title' => $title,
-        'device' => false,
       ));
   }
 

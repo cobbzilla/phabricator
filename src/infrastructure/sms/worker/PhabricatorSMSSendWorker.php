@@ -11,7 +11,7 @@ final class PhabricatorSMSSendWorker
     return phutil_units('1 minute in seconds');
   }
 
-  public function doWork() {
+  protected function doWork() {
     $viewer = PhabricatorUser::getOmnipotentUser();
 
     $task_data = $this->getTaskData();
@@ -54,6 +54,15 @@ final class PhabricatorSMSSendWorker
     $adapter->setBody($sms->getBody());
     // give the provider name the same treatment as phone number
     $sms->setProviderShortName($adapter->getProviderShortName());
+
+    if (PhabricatorEnv::getEnvConfig('phabricator.silent')) {
+      $sms->setSendStatus(PhabricatorSMS::STATUS_FAILED_PERMANENTLY);
+      $sms->save();
+      throw new PhabricatorWorkerPermanentFailureException(
+        pht(
+          'Phabricator is running in silent mode. See `phabricator.silent` '.
+          'in the configuration to change this setting.'));
+    }
 
     try {
       $result = $adapter->send();

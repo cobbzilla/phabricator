@@ -6,9 +6,8 @@ final class DiffusionHistoryController extends DiffusionController {
     return true;
   }
 
-  public function processRequest() {
+  protected function processDiffusionRequest(AphrontRequest $request) {
     $drequest = $this->diffusionRequest;
-    $request = $this->getRequest();
     $viewer = $request->getUser();
     $repository = $drequest->getRepository();
 
@@ -19,7 +18,8 @@ final class DiffusionHistoryController extends DiffusionController {
       'commit' => $drequest->getCommit(),
       'path' => $drequest->getPath(),
       'offset' => $offset,
-      'limit' => $page_size + 1);
+      'limit' => $page_size + 1,
+    );
 
     if (!$request->getBool('copies')) {
       $params['needDirectChanges'] = true;
@@ -57,10 +57,9 @@ final class DiffusionHistoryController extends DiffusionController {
       $history_table->setIsHead($offset == 0);
     }
 
-    $history_panel = new AphrontPanelView();
+    $history_panel = new PHUIObjectBoxView();
+    $history_panel->setHeaderText(pht('History'));
     $history_panel->appendChild($history_table);
-    $history_panel->appendChild($pager);
-    $history_panel->setNoBackground();
 
     $content[] = $history_panel;
 
@@ -88,6 +87,7 @@ final class DiffusionHistoryController extends DiffusionController {
         $crumbs,
         $object_box,
         $content,
+        $pager,
       ),
       array(
         'title' => array(

@@ -32,6 +32,8 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
       'title'         => $is_new ? 'required string' : 'optional string',
       'description'   => 'optional string',
       'ownerPHID'     => 'optional phid',
+      'viewPolicy'    => 'optional phid or policy string',
+      'editPolicy'    => 'optional phid or policy string',
       'ccPHIDs'       => 'optional list<phid>',
       'priority'      => 'optional int',
       'projectPHIDs'  => 'optional list<phid>',
@@ -40,7 +42,7 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
 
     if (!$is_new) {
       $fields += array(
-        'status'    => 'optional int',
+        'status'    => 'optional string',
         'comments'  => 'optional string',
       );
     }
@@ -60,6 +62,8 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
       $task->setDescription((string)$request->getValue('description'));
       $changes[ManiphestTransaction::TYPE_STATUS] =
         ManiphestTaskStatus::getDefaultStatus();
+      $changes[PhabricatorTransactions::TYPE_SUBSCRIBERS] =
+        array('+' => array($request->getUser()->getPHID()));
     } else {
 
       $comments = $request->getValue('comments');
@@ -109,10 +113,25 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
 
     $ccs = $request->getValue('ccPHIDs');
     if ($ccs !== null) {
-      $changes[ManiphestTransaction::TYPE_CCS] = $ccs;
+      $changes[PhabricatorTransactions::TYPE_SUBSCRIBERS] =
+        array('=' => array_fuse($ccs));
     }
 
     $transactions = array();
+
+    $view_policy = $request->getValue('viewPolicy');
+    if ($view_policy !== null) {
+      $transactions[] = id(new ManiphestTransaction())
+        ->setTransactionType(PhabricatorTransactions::TYPE_VIEW_POLICY)
+        ->setNewValue($view_policy);
+    }
+
+    $edit_policy = $request->getValue('editPolicy');
+    if ($edit_policy !== null) {
+      $transactions[] = id(new ManiphestTransaction())
+        ->setTransactionType(PhabricatorTransactions::TYPE_EDIT_POLICY)
+        ->setNewValue($edit_policy);
+    }
 
     $project_phids = $request->getValue('projectPHIDs');
     if ($project_phids !== null) {
@@ -212,6 +231,14 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
     $event->setUser($request->getUser());
     $event->setConduitRequest($request);
     PhutilEventEngine::dispatchEvent($event);
+
+    // reload the task now that we've done all the fun stuff
+    return id(new ManiphestTaskQuery())
+      ->setViewer($request->getUser())
+      ->withPHIDs(array($task->getPHID()))
+      ->needSubscriberPHIDs(true)
+      ->needProjectPHIDs(true)
+      ->executeOne();
   }
 
   protected function buildTaskInfoDictionaries(array $tasks) {
@@ -224,7 +251,7 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
 
     $all_deps = id(new PhabricatorEdgeQuery())
       ->withSourcePHIDs($task_phids)
-      ->withEdgeTypes(array(PhabricatorEdgeConfig::TYPE_TASK_DEPENDS_ON_TASK));
+      ->withEdgeTypes(array(ManiphestTaskDependsOnTaskEdgeType::EDGECONST));
     $all_deps->execute();
 
     $result = array();
@@ -242,14 +269,14 @@ abstract class ManiphestConduitAPIMethod extends ConduitAPIMethod {
 
       $task_deps = $all_deps->getDestinationPHIDs(
         array($task->getPHID()),
-        array(PhabricatorEdgeConfig::TYPE_TASK_DEPENDS_ON_TASK));
+        array(ManiphestTaskDependsOnTaskEdgeType::EDGECONST));
 
       $result[$task->getPHID()] = array(
         'id'           => $task->getID(),
         'phid'         => $task->getPHID(),
         'authorPHID'   => $task->getAuthorPHID(),
         'ownerPHID'    => $task->getOwnerPHID(),
-        'ccPHIDs'      => $task->getCCPHIDs(),
+        'ccPHIDs'      => $task->getSubscriberPHIDs(),
         'status'       => $task->getStatus(),
         'statusName'   => ManiphestTaskStatus::getTaskStatusName(
           $task->getStatus()),

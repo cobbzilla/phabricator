@@ -22,7 +22,8 @@ final class PhabricatorAccessControlTestCase extends PhabricatorTestCase {
       ->setApplicationConfiguration($application_configuration)
       ->setRequestData(array());
 
-    $controller = new PhabricatorTestController($request);
+    $controller = new PhabricatorTestController();
+    $controller->setRequest($request);
 
     $u_public = id(new PhabricatorUser())
       ->setUsername('public');
@@ -169,7 +170,7 @@ final class PhabricatorAccessControlTestCase extends PhabricatorTestCase {
     // Test public access.
 
     $this->checkAccess(
-      'No Login Required',
+      'Public Access',
       id(clone $controller)->setConfig('public', true),
       $request,
       array(

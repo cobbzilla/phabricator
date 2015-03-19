@@ -4,12 +4,13 @@ final class PhabricatorApplicationQuery
   extends PhabricatorCursorPagedPolicyAwareQuery {
 
   private $installed;
-  private $beta;
+  private $prototypes;
   private $firstParty;
   private $nameContains;
   private $unlisted;
   private $classes;
   private $launchable;
+  private $applicationEmailSupport;
   private $phids;
 
   const ORDER_APPLICATION = 'order:application';
@@ -27,8 +28,8 @@ final class PhabricatorApplicationQuery
     return $this;
   }
 
-  public function withBeta($beta) {
-    $this->beta = $beta;
+  public function withPrototypes($prototypes) {
+    $this->prototypes = $prototypes;
     return $this;
   }
 
@@ -47,6 +48,11 @@ final class PhabricatorApplicationQuery
     return $this;
   }
 
+  public function withApplicationEmailSupport($appemails) {
+    $this->applicationEmailSupport = $appemails;
+    return $this;
+  }
+
   public function withClasses(array $classes) {
     $this->classes = $classes;
     return $this;
@@ -62,7 +68,7 @@ final class PhabricatorApplicationQuery
     return $this;
   }
 
-  public function loadPage() {
+  protected function loadPage() {
     $apps = PhabricatorApplication::getAllApplications();
 
     if ($this->classes) {
@@ -99,9 +105,9 @@ final class PhabricatorApplicationQuery
       }
     }
 
-    if ($this->beta !== null) {
+    if ($this->prototypes !== null) {
       foreach ($apps as $key => $app) {
-        if ($app->isBeta() != $this->beta) {
+        if ($app->isPrototype() != $this->prototypes) {
           unset($apps[$key]);
         }
       }
@@ -131,6 +137,14 @@ final class PhabricatorApplicationQuery
       }
     }
 
+    if ($this->applicationEmailSupport !== null) {
+      foreach ($apps as $key => $app) {
+        if ($app->supportsEmailIntegration() !=
+            $this->applicationEmailSupport) {
+          unset($apps[$key]);
+        }
+      }
+    }
 
     switch ($this->order) {
       case self::ORDER_NAME:

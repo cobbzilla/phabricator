@@ -3,6 +3,7 @@
 final class PhabricatorProjectColumn
   extends PhabricatorProjectDAO
   implements
+    PhabricatorApplicationTransactionInterface,
     PhabricatorPolicyInterface,
     PhabricatorDestructibleInterface {
 
@@ -27,11 +28,24 @@ final class PhabricatorProjectColumn
       ->setStatus(self::STATUS_ACTIVE);
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
         'properties' => self::SERIALIZATION_JSON,
+      ),
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'name' => 'text255',
+        'status' => 'uint32',
+        'sequence' => 'uint32',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_status' => array(
+          'columns' => array('projectPHID', 'status', 'sequence'),
+        ),
+        'key_sequence' => array(
+          'columns' => array('projectPHID', 'sequence'),
+        ),
       ),
     ) + parent::getConfiguration();
   }
@@ -71,16 +85,36 @@ final class PhabricatorProjectColumn
     return pht('Unnamed Column');
   }
 
-  public function getHeaderColor() {
-    if ($this->isHidden()) {
-      return PHUIActionHeaderView::HEADER_LIGHTRED;
-    }
-
+  public function getDisplayType() {
     if ($this->isDefaultColumn()) {
-      return PHUIActionHeaderView::HEADER_DARK_GREY;
+      return pht('(Default)');
+    }
+    if ($this->isHidden()) {
+      return pht('(Hidden)');
     }
 
-    return PHUIActionHeaderView::HEADER_GREY;
+    return null;
+  }
+
+  public function getHeaderIcon() {
+    $icon = null;
+
+    if ($this->isHidden()) {
+      $icon = 'fa-eye-slash';
+      $text = pht('Hidden');
+    }
+
+    if ($icon) {
+      return id(new PHUIIconView())
+        ->setIconFont($icon)
+        ->addSigil('has-tooltip')
+        ->setMetadata(
+          array(
+            'tip' => $text,
+          ));;
+    }
+
+    return null;
   }
 
   public function getProperty($key, $default = null) {
@@ -90,6 +124,38 @@ final class PhabricatorProjectColumn
   public function setProperty($key, $value) {
     $this->properties[$key] = $value;
     return $this;
+  }
+
+  public function getPointLimit() {
+    return $this->getProperty('pointLimit');
+  }
+
+  public function setPointLimit($limit) {
+    $this->setProperty('pointLimit', $limit);
+    return $this;
+  }
+
+
+/* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
+
+
+  public function getApplicationTransactionEditor() {
+    return new PhabricatorProjectColumnTransactionEditor();
+  }
+
+  public function getApplicationTransactionObject() {
+    return $this;
+  }
+
+  public function getApplicationTransactionTemplate() {
+    return new PhabricatorProjectColumnTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    return $timeline;
   }
 
 

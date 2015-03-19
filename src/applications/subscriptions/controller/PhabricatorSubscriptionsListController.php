@@ -9,6 +9,10 @@ final class PhabricatorSubscriptionsListController
     $this->phid = idx($data, 'phid');
   }
 
+  public function shouldAllowPublic() {
+    return true;
+  }
+
   public function processRequest() {
     $request = $this->getRequest();
 
@@ -23,8 +27,6 @@ final class PhabricatorSubscriptionsListController
     if ($object instanceof PhabricatorSubscribableInterface) {
       $subscriber_phids = PhabricatorSubscribersQuery::loadSubscribersForPHID(
         $phid);
-    } else if ($object instanceof ManiphestTask) {
-      $subscriber_phids = $object->getCCPHIDs();
     }
 
     $handle_phids = $subscriber_phids;

@@ -41,6 +41,7 @@ final class PhabricatorMarkupEngine {
 
   private $objects = array();
   private $viewer;
+  private $contextObject;
   private $version = 14;
 
 
@@ -54,15 +55,18 @@ final class PhabricatorMarkupEngine {
    * @param PhabricatorMarkupInterface  The object to render.
    * @param string                      The field to render.
    * @param PhabricatorUser             User viewing the markup.
+   * @param object                      A context object for policy checks
    * @return string                     Marked up output.
    * @task markup
    */
   public static function renderOneObject(
     PhabricatorMarkupInterface $object,
     $field,
-    PhabricatorUser $viewer) {
+    PhabricatorUser $viewer,
+    $context_object = null) {
     return id(new PhabricatorMarkupEngine())
       ->setViewer($viewer)
+      ->setContextObject($context_object)
       ->addObject($object, $field)
       ->process()
       ->getOutput($object, $field);
@@ -116,6 +120,7 @@ final class PhabricatorMarkupEngine {
     foreach ($objects as $key => $info) {
       $engines[$key] = $info['object']->newMarkupEngine($info['field']);
       $engines[$key]->setConfig('viewer', $this->viewer);
+      $engines[$key]->setConfig('contextObject', $this->contextObject);
     }
 
     // Load or build the preprocessor caches.
@@ -290,6 +295,18 @@ final class PhabricatorMarkupEngine {
     return $this;
   }
 
+  /**
+   * Set the context object. Used to implement object permissions.
+   *
+   * @param The object in which context this remarkup is used.
+   * @return this
+   * @task markup
+   */
+  public function setContextObject($object) {
+    $this->contextObject = $object;
+    return $this;
+  }
+
 
 /* -(  Engine Construction  )------------------------------------------------ */
 
@@ -445,6 +462,7 @@ final class PhabricatorMarkupEngine {
 
 
     $rules[] = new PhutilRemarkupDocumentLinkRule();
+    $rules[] = new PhabricatorNavigationRemarkupRule();
 
     if ($options['youtube']) {
       $rules[] = new PhabricatorYoutubeRemarkupRule();
@@ -530,13 +548,15 @@ final class PhabricatorMarkupEngine {
 
     foreach ($content_blocks as $content_block) {
       $engine->markupText($content_block);
-      $ids = $engine->getTextMetadata(
+      $phids = $engine->getTextMetadata(
         PhabricatorEmbedFileRemarkupRule::KEY_EMBED_FILE_PHIDS,
         array());
-      $files += $ids;
+      foreach ($phids as $phid) {
+        $files[$phid] = $phid;
+      }
     }
 
-    return $files;
+    return array_values($files);
   }
 
   /**

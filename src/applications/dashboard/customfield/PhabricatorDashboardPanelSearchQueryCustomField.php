@@ -16,6 +16,7 @@ final class PhabricatorDashboardPanelSearchQueryCustomField
     $engines = id(new PhutilSymbolLoader())
       ->setAncestorClass('PhabricatorApplicationSearchEngine')
       ->loadObjects();
+    $engines = mfilter($engines, 'canUseInPanelContext');
 
     $value = $this->getFieldValue();
 
@@ -52,8 +53,8 @@ final class PhabricatorDashboardPanelSearchQueryCustomField
         'options' => $queries,
         'value' => array(
           'key' => strlen($value) ? $value : null,
-          'name' => $name
-        )
+          'name' => $name,
+        ),
       ));
 
     return id(new AphrontFormSelectControl())

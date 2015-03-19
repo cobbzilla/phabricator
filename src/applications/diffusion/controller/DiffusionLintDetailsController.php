@@ -2,9 +2,9 @@
 
 final class DiffusionLintDetailsController extends DiffusionController {
 
-  public function processRequest() {
+  protected function processDiffusionRequest(AphrontRequest $request) {
     $limit = 500;
-    $offset = $this->getRequest()->getInt('offset', 0);
+    $offset = $request->getInt('offset', 0);
 
     $drequest = $this->getDiffusionRequest();
     $branch = $drequest->loadBranch();
@@ -17,20 +17,24 @@ final class DiffusionLintDetailsController extends DiffusionController {
     foreach ($messages as $message) {
       $path = phutil_tag(
         'a',
-        array('href' => $drequest->generateURI(array(
-          'action' => 'lint',
-          'path' => $message['path'],
-        ))),
+        array(
+          'href' => $drequest->generateURI(array(
+            'action' => 'lint',
+            'path' => $message['path'],
+          )),
+        ),
         substr($message['path'], strlen($drequest->getPath()) + 1));
 
       $line = phutil_tag(
         'a',
-        array('href' => $drequest->generateURI(array(
-          'action' => 'browse',
-          'path' => $message['path'],
-          'line' => $message['line'],
-          'commit' => $branch->getLintCommit(),
-        ))),
+        array(
+          'href' => $drequest->generateURI(array(
+            'action' => 'browse',
+            'path' => $message['path'],
+            'line' => $message['line'],
+            'commit' => $branch->getLintCommit(),
+          )),
+        ),
         $message['line']);
 
       $author = $message['authorPHID'];
@@ -66,12 +70,11 @@ final class DiffusionLintDetailsController extends DiffusionController {
       ->setPageSize($limit)
       ->setOffset($offset)
       ->setHasMorePages(count($messages) >= $limit)
-      ->setURI($this->getRequest()->getRequestURI(), 'offset');
+      ->setURI($request->getRequestURI(), 'offset');
 
-    $content[] = id(new AphrontPanelView())
-      ->setNoBackground(true)
-      ->appendChild($table)
-      ->appendChild($pager);
+    $content[] = id(new PHUIObjectBoxView())
+      ->setHeaderText(pht('Lint Details'))
+      ->appendChild($table);
 
     $crumbs = $this->buildCrumbs(
       array(
@@ -84,13 +87,15 @@ final class DiffusionLintDetailsController extends DiffusionController {
       array(
         $crumbs,
         $content,
+        $pager,
       ),
       array(
         'title' =>
           array(
             pht('Lint'),
             $drequest->getRepository()->getCallsign(),
-      )));
+          ),
+      ));
   }
 
   private function loadLintMessages(

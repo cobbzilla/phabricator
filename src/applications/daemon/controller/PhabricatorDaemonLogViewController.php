@@ -64,6 +64,14 @@ final class PhabricatorDaemonLogViewController
     }
 
     $header->addTag($tag);
+    $env_hash = PhabricatorEnv::calculateEnvironmentHash();
+    if ($log->getEnvHash() != $env_hash) {
+      $tag = id(new PHUITagView())
+        ->setType(PHUITagView::TYPE_STATE)
+        ->setBackgroundColor(PHUITagView::COLOR_YELLOW)
+        ->setName(pht('Stale Config'));
+      $header->addTag($tag);
+    }
 
     $properties = $this->buildPropertyListView($log);
 
@@ -71,8 +79,8 @@ final class PhabricatorDaemonLogViewController
       ->setUser($user)
       ->setEvents($events);
 
-    $event_panel = new AphrontPanelView();
-    $event_panel->setNoBackground();
+    $event_panel = new PHUIObjectBoxView();
+    $event_panel->setHeaderText(pht('Events'));
     $event_panel->appendChild($event_view);
 
     $object_box = id(new PHUIObjectBoxView())
@@ -87,7 +95,6 @@ final class PhabricatorDaemonLogViewController
       ),
       array(
         'title' => pht('Daemon Log'),
-        'device' => false,
       ));
   }
 
@@ -104,7 +111,7 @@ final class PhabricatorDaemonLogViewController
 
     $unknown_time = PhabricatorDaemonLogQuery::getTimeUntilUnknown();
     $dead_time = PhabricatorDaemonLogQuery::getTimeUntilDead();
-    $wait_time = PhutilDaemonOverseer::RESTART_WAIT;
+    $wait_time = PhutilDaemonHandle::getWaitBeforeRestart();
 
     $details = null;
     $status = $daemon->getStatus();
@@ -155,6 +162,7 @@ final class PhabricatorDaemonLogViewController
     $view->addProperty(pht('Daemon Class'), $daemon->getDaemon());
     $view->addProperty(pht('Host'), $daemon->getHost());
     $view->addProperty(pht('PID'), $daemon->getPID());
+    $view->addProperty(pht('Running as'), $daemon->getRunningAsUser());
     $view->addProperty(pht('Started'), phabricator_datetime($c_epoch, $viewer));
     $view->addProperty(
       pht('Seen'),
@@ -182,7 +190,7 @@ final class PhabricatorDaemonLogViewController
       phutil_tag(
         'tt',
         array(),
-        "phabricator/ $ ./bin/phd log {$id}"));
+        "phabricator/ $ ./bin/phd log --id {$id}"));
 
 
     return $view;

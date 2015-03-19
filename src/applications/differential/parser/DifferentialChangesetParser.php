@@ -43,6 +43,34 @@ final class DifferentialChangesetParser {
   private $renderer;
   private $characterEncoding;
   private $highlightAs;
+  private $showEditAndReplyLinks = true;
+
+  private $rangeStart;
+  private $rangeEnd;
+  private $mask;
+
+  public function setRange($start, $end) {
+    $this->rangeStart = $start;
+    $this->rangeEnd = $end;
+    return $this;
+  }
+
+  public function setMask(array $mask) {
+    $this->mask = $mask;
+    return $this;
+  }
+
+  public function renderChangeset() {
+    return $this->render($this->rangeStart, $this->rangeEnd, $this->mask);
+  }
+
+  public function setShowEditAndReplyLinks($bool) {
+    $this->showEditAndReplyLinks = $bool;
+    return $this;
+  }
+  public function getShowEditAndReplyLinks() {
+    return $this->showEditAndReplyLinks;
+  }
 
   public function setHighlightAs($highlight_as) {
     $this->highlightAs = $highlight_as;
@@ -62,7 +90,7 @@ final class DifferentialChangesetParser {
     return $this->characterEncoding;
   }
 
-  public function setRenderer($renderer) {
+  public function setRenderer(DifferentialChangesetRenderer $renderer) {
     $this->renderer = $renderer;
     return $this;
   }
@@ -83,6 +111,44 @@ final class DifferentialChangesetParser {
     return $this->disableCache;
   }
 
+  public static function getDefaultRendererForViewer(PhabricatorUser $viewer) {
+    $prefs = $viewer->loadPreferences();
+    $pref_unified = PhabricatorUserPreferences::PREFERENCE_DIFF_UNIFIED;
+    if ($prefs->getPreference($pref_unified) == 'unified') {
+      return '1up';
+    }
+    return null;
+  }
+
+  public function readParametersFromRequest(AphrontRequest $request) {
+    $this->setWhitespaceMode($request->getStr('whitespace'));
+    $this->setCharacterEncoding($request->getStr('encoding'));
+    $this->setHighlightAs($request->getStr('highlight'));
+
+    $renderer = null;
+
+    // If the viewer prefers unified diffs, always set the renderer to unified.
+    // Otherwise, we leave it unspecified and the client will choose a
+    // renderer based on the screen size.
+
+    if ($request->getStr('renderer')) {
+      $renderer = $request->getStr('renderer');
+    } else {
+      $renderer = self::getDefaultRendererForViewer($request->getViewer());
+    }
+
+    switch ($renderer) {
+      case '1up':
+        $this->setRenderer(new DifferentialChangesetOneUpRenderer());
+        break;
+      default:
+        $this->setRenderer(new DifferentialChangesetTwoUpRenderer());
+        break;
+    }
+
+    return $this;
+  }
+
   const CACHE_VERSION = 11;
   const CACHE_MAX_SIZE = 8e6;
 
@@ -90,16 +156,14 @@ final class DifferentialChangesetParser {
   const ATTR_DELETED    = 'attr:deleted';
   const ATTR_UNCHANGED  = 'attr:unchanged';
   const ATTR_WHITELINES = 'attr:white';
+  const ATTR_MOVEAWAY   = 'attr:moveaway';
 
   const LINES_CONTEXT = 8;
 
   const WHITESPACE_SHOW_ALL         = 'show-all';
   const WHITESPACE_IGNORE_TRAILING  = 'ignore-trailing';
-
-  // TODO: This is now "Ignore Most" in the UI.
+  const WHITESPACE_IGNORE_MOST      = 'ignore-most';
   const WHITESPACE_IGNORE_ALL       = 'ignore-all';
-
-  const WHITESPACE_IGNORE_FORCE     = 'ignore-force';
 
   public function setOldLines(array $lines) {
     $this->old = $lines;
@@ -249,6 +313,10 @@ final class DifferentialChangesetParser {
   public function setUser(PhabricatorUser $user) {
     $this->user = $user;
     return $this;
+  }
+
+  public function getUser() {
+    return $this->user;
   }
 
   public function setCoverage($coverage) {
@@ -438,6 +506,10 @@ final class DifferentialChangesetParser {
     return idx($this->specialAttributes, self::ATTR_WHITELINES, false);
   }
 
+  public function isMoveAway() {
+    return idx($this->specialAttributes, self::ATTR_MOVEAWAY, false);
+  }
+
   private function applyIntraline(&$render, $intra, $corpus) {
 
     foreach ($render as $key => $text) {
@@ -478,14 +550,14 @@ final class DifferentialChangesetParser {
     switch ($whitespace_mode) {
       case self::WHITESPACE_SHOW_ALL:
       case self::WHITESPACE_IGNORE_TRAILING:
-      case self::WHITESPACE_IGNORE_FORCE:
+      case self::WHITESPACE_IGNORE_ALL:
         break;
       default:
-        $whitespace_mode = self::WHITESPACE_IGNORE_ALL;
+        $whitespace_mode = self::WHITESPACE_IGNORE_MOST;
         break;
     }
 
-    $skip_cache = ($whitespace_mode != self::WHITESPACE_IGNORE_ALL);
+    $skip_cache = ($whitespace_mode != self::WHITESPACE_IGNORE_MOST);
     if ($this->disableCache) {
       $skip_cache = true;
     }
@@ -521,10 +593,10 @@ final class DifferentialChangesetParser {
     $whitespace_mode = $this->whitespaceMode;
     $changeset = $this->changeset;
 
-    $ignore_all = (($whitespace_mode == self::WHITESPACE_IGNORE_ALL) ||
-                  ($whitespace_mode == self::WHITESPACE_IGNORE_FORCE));
+    $ignore_all = (($whitespace_mode == self::WHITESPACE_IGNORE_MOST) ||
+                  ($whitespace_mode == self::WHITESPACE_IGNORE_ALL));
 
-    $force_ignore = ($whitespace_mode == self::WHITESPACE_IGNORE_FORCE);
+    $force_ignore = ($whitespace_mode == self::WHITESPACE_IGNORE_ALL);
 
     if (!$force_ignore) {
       if ($ignore_all && $changeset->getWhitespaceMatters()) {
@@ -594,19 +666,17 @@ final class DifferentialChangesetParser {
       }
     }
 
+    $moveaway = false;
     $changetype = $this->changeset->getChangeType();
     if ($changetype == DifferentialChangeType::TYPE_MOVE_AWAY) {
-      // sometimes we show moved files as unchanged, sometimes deleted,
-      // and sometimes inconsistent with what actually happened at the
-      // destination of the move. Rather than make a false claim,
-      // omit the 'not changed' notice if this is the source of a move
-      $unchanged = false;
+      $moveaway = true;
     }
 
     $this->setSpecialAttributes(array(
       self::ATTR_UNCHANGED  => $unchanged,
       self::ATTR_DELETED    => $hunk_parser->getIsDeleted(),
       self::ATTR_WHITELINES => !$hunk_parser->getHasTextChanges(),
+      self::ATTR_MOVEAWAY   => $moveaway,
     ));
 
     $hunk_parser->generateIntraLineDiffs();
@@ -645,7 +715,7 @@ final class DifferentialChangesetParser {
     );
 
     $this->highlightErrors = false;
-    foreach (Futures($futures) as $key => $future) {
+    foreach (new FutureIterator($futures) as $key => $future) {
       try {
         try {
           $highlighted = $future->resolve();
@@ -690,22 +760,6 @@ final class DifferentialChangesetParser {
       return false;
     }
 
-    $old = $changeset->getOldProperties();
-    $new = $changeset->getNewProperties();
-
-    if ($old === $new) {
-      return false;
-    }
-
-    if ($changeset->getChangeType() == DifferentialChangeType::TYPE_ADD &&
-        $new == array('unix:filemode' => '100644')) {
-      return false;
-    }
-
-    if ($changeset->getChangeType() == DifferentialChangeType::TYPE_DELETE &&
-        $old == array('unix:filemode' => '100644')) {
-      return false;
-    }
     return true;
   }
 
@@ -747,6 +801,7 @@ final class DifferentialChangesetParser {
       count($this->new));
 
     $renderer = $this->getRenderer()
+      ->setUser($this->getUser())
       ->setChangeset($this->changeset)
       ->setRenderPropertyChangeHeader($render_pch)
       ->setIsTopLevel($this->isTopLevel)
@@ -763,11 +818,8 @@ final class DifferentialChangesetParser {
       ->setHandles($this->handles)
       ->setOldLines($this->old)
       ->setNewLines($this->new)
-      ->setOriginalCharacterEncoding($encoding);
-
-    if ($this->user) {
-      $renderer->setUser($this->user);
-    }
+      ->setOriginalCharacterEncoding($encoding)
+      ->setShowEditAndReplyLinks($this->getShowEditAndReplyLinks());
 
     $shield = null;
     if ($this->isTopLevel && !$this->comments) {
@@ -776,6 +828,16 @@ final class DifferentialChangesetParser {
           pht(
             'This file contains generated code, which does not normally '.
             'need to be reviewed.'));
+      } else if ($this->isMoveAway()) {
+        // We put an empty shield on these files. Normally, they do not have
+        // any diff content anyway. However, if they come through `arc`, they
+        // may have content. We don't want to show it (it's not useful) and
+        // we bailed out of fully processing it earlier anyway.
+
+        // We could show a message like "this file was moved", but we show
+        // that as a change header anyway, so it would be redundant. Instead,
+        // just render an empty shield to skip rendering the diff body.
+        $shield = '';
       } else if ($this->isUnchanged()) {
         $type = 'text';
         if (!$rows) {
@@ -788,9 +850,19 @@ final class DifferentialChangesetParser {
           // we'll never have it so we need to be prepared to not render a link.
           $type = 'none';
         }
-        $shield = $renderer->renderShield(
-          pht('The contents of this file were not changed.'),
-          $type);
+
+        $type_add = DifferentialChangeType::TYPE_ADD;
+        if ($this->changeset->getChangeType() == $type_add) {
+          // Although the generic message is sort of accurate in a technical
+          // sense, this more-tailored message is less confusing.
+          $shield = $renderer->renderShield(
+            pht('This is an empty file.'),
+            $type);
+        } else {
+          $shield = $renderer->renderShield(
+            pht('The contents of this file were not changed.'),
+            $type);
+        }
       } else if ($this->isWhitespaceOnly()) {
         $shield = $renderer->renderShield(
           pht('This file was changed only by adding or removing whitespace.'),
@@ -807,7 +879,7 @@ final class DifferentialChangesetParser {
       }
     }
 
-    if ($shield) {
+    if ($shield !== null) {
       return $renderer->renderChangesetTable($shield);
     }
 
@@ -911,10 +983,10 @@ final class DifferentialChangesetParser {
             $file_phids[] = $new_phid;
           }
 
-          // TODO: (T603) Probably fine to use omnipotent viewer here?
-          $files = id(new PhabricatorFile())->loadAllWhere(
-            'phid IN (%Ls)',
-            $file_phids);
+          $files = id(new PhabricatorFileQuery())
+            ->setViewer($this->getUser())
+            ->withPHIDs($file_phids)
+            ->execute();
           foreach ($files as $file) {
             if (empty($file)) {
               continue;
@@ -926,6 +998,9 @@ final class DifferentialChangesetParser {
             }
           }
         }
+
+        $renderer->attachOldFile($old);
+        $renderer->attachNewFile($new);
 
         return $renderer->renderFileChange($old, $new, $id, $vs);
       case DifferentialChangeType::FILE_DIRECTORY:

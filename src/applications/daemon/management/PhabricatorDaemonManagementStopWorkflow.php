@@ -3,7 +3,7 @@
 final class PhabricatorDaemonManagementStopWorkflow
   extends PhabricatorDaemonManagementWorkflow {
 
-  public function didConstruct() {
+  protected function didConstruct() {
     $this
       ->setName('stop')
       ->setSynopsis(
@@ -21,6 +21,18 @@ final class PhabricatorDaemonManagementStopWorkflow
             'default' => 15,
           ),
           array(
+            'name' => 'force',
+            'help' => pht(
+              'Also stop running processes that look like daemons but do '.
+              'not have corresponding PID files.'),
+          ),
+          array(
+            'name' => 'gently',
+            'help' => pht(
+              'Ignore running processes that look like daemons but do not '.
+              'have corresponding PID files.'),
+          ),
+          array(
             'name' => 'pids',
             'wildcard' => true,
           ),
@@ -28,9 +40,13 @@ final class PhabricatorDaemonManagementStopWorkflow
   }
 
   public function execute(PhutilArgumentParser $args) {
-    $pids = $args->getArg('pids');
-    $graceful = $args->getArg('graceful');
-    return $this->executeStopCommand($pids, $graceful);
+    return $this->executeStopCommand(
+      $args->getArg('pids'),
+      array(
+        'graceful' => $args->getArg('graceful'),
+        'force' => $args->getArg('force'),
+        'gently' => $args->getArg('gently'),
+      ));
   }
 
 }

@@ -15,16 +15,9 @@ final class PhabricatorProjectBoardViewController
     return true;
   }
 
-  public function willProcessRequest(array $data) {
-    $this->id = idx($data, 'id');
-    $this->slug = idx($data, 'slug');
-    $this->queryKey = idx($data, 'queryKey');
-    $this->filter = (bool)idx($data, 'filter');
-  }
-
-  public function processRequest() {
-    $request = $this->getRequest();
+  public function handleRequest(AphrontRequest $request) {
     $viewer = $request->getUser();
+    $id = $request->getURIData('id');
 
     $show_hidden = $request->getBool('hidden');
     $this->showHidden = $show_hidden;
@@ -32,10 +25,12 @@ final class PhabricatorProjectBoardViewController
     $project = id(new PhabricatorProjectQuery())
       ->setViewer($viewer)
       ->needImages(true);
-    if ($this->slug) {
-      $project->withSlugs(array($this->slug));
+    $id = $request->getURIData('id');
+    $slug = $request->getURIData('slug');
+    if ($slug) {
+      $project->withSlugs(array($slug));
     } else {
-      $project->withIDs(array($this->id));
+      $project->withIDs(array($id));
     }
     $project = $project->executeOne();
     if (!$project) {
@@ -68,7 +63,9 @@ final class PhabricatorProjectBoardViewController
     $columns = $column_query->execute();
     $columns = mpull($columns, null, 'getSequence');
 
-    if (empty($columns[0])) {
+    // TODO: Expand the checks here if we add the ability
+    // to hide the Backlog column
+    if (!$columns) {
       switch ($request->getStr('initialize-type')) {
         case 'backlog-only':
           $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
@@ -104,12 +101,25 @@ final class PhabricatorProjectBoardViewController
     if ($request->isFormPost()) {
       $saved = $engine->buildSavedQueryFromRequest($request);
       $engine->saveQuery($saved);
+      $filter_form = id(new AphrontFormView())
+        ->setUser($viewer);
+      $engine->buildSearchForm($filter_form, $saved);
+      if ($engine->getErrors()) {
+        return $this->newDialog()
+          ->setWidth(AphrontDialogView::WIDTH_FULL)
+          ->setTitle(pht('Advanced Filter'))
+          ->appendChild($filter_form->buildLayoutView())
+          ->setErrors($engine->getErrors())
+          ->setSubmitURI($board_uri)
+          ->addSubmitButton(pht('Apply Filter'))
+          ->addCancelButton($board_uri);
+      }
       return id(new AphrontRedirectResponse())->setURI(
         $this->getURIWithState(
           $engine->getQueryResultsPageURI($saved->getQueryKey())));
     }
 
-    $query_key = $this->queryKey;
+    $query_key = $request->getURIData('queryKey');
     if (!$query_key) {
       $query_key = 'open';
     }
@@ -131,7 +141,7 @@ final class PhabricatorProjectBoardViewController
       $custom_query = $saved;
     }
 
-    if ($this->filter) {
+    if ($request->getURIData('filter')) {
       $filter_form = id(new AphrontFormView())
         ->setUser($viewer);
       $engine->buildSearchForm($filter_form, $saved);
@@ -220,12 +230,37 @@ final class PhabricatorProjectBoardViewController
     $this->handles = ManiphestTaskListView::loadTaskHandles($viewer, $tasks);
 
     foreach ($columns as $column) {
+      $task_phids = idx($task_map, $column->getPHID(), array());
+      $column_tasks = array_select_keys($tasks, $task_phids);
+
       $panel = id(new PHUIWorkpanelView())
         ->setHeader($column->getDisplayName())
-        ->setHeaderColor($column->getHeaderColor());
+        ->setSubHeader($column->getDisplayType())
+        ->addSigil('workpanel');
+
+      $header_icon = $column->getHeaderIcon();
+      if ($header_icon) {
+        $panel->setHeaderIcon($header_icon);
+      }
+
+      if ($column->isHidden()) {
+        $panel->addClass('project-panel-hidden');
+      }
 
       $column_menu = $this->buildColumnMenu($project, $column);
       $panel->addHeaderAction($column_menu);
+
+      $tag_id = celerity_generate_unique_node_id();
+      $tag_content_id = celerity_generate_unique_node_id();
+
+      $count_tag = id(new PHUITagView())
+        ->setType(PHUITagView::TYPE_SHADE)
+        ->setShade(PHUITagView::COLOR_BLUE)
+        ->setID($tag_id)
+        ->setName(phutil_tag('span', array('id' => $tag_content_id), '-'))
+        ->setStyle('display: none');
+
+      $panel->setHeaderTag($count_tag);
 
       $cards = id(new PHUIObjectItemListView())
         ->setUser($viewer)
@@ -235,10 +270,12 @@ final class PhabricatorProjectBoardViewController
         ->setMetadata(
           array(
             'columnPHID' => $column->getPHID(),
+            'countTagID' => $tag_id,
+            'countTagContentID' => $tag_content_id,
+            'pointLimit' => $column->getPointLimit(),
           ));
 
-      $task_phids = idx($task_map, $column->getPHID(), array());
-      foreach (array_select_keys($tasks, $task_phids) as $task) {
+      foreach ($column_tasks as $task) {
         $owner = null;
         if ($task->getOwnerPHID()) {
           $owner = $this->handles[$task->getOwnerPHID()];
@@ -252,11 +289,6 @@ final class PhabricatorProjectBoardViewController
           ->getItem());
       }
       $panel->setCards($cards);
-
-      if (!$task_phids) {
-        $cards->addClass('project-column-empty');
-      }
-
       $board->addPanel($panel);
     }
 
@@ -279,16 +311,14 @@ final class PhabricatorProjectBoardViewController
     $header_link = phutil_tag(
       'a',
       array(
-        'href' => $this->getApplicationURI('view/'.$project->getID().'/')
+        'href' => $this->getApplicationURI('profile/'.$project->getID().'/'),
       ),
       $project->getName());
 
     $header = id(new PHUIHeaderView())
-      ->setHeader($header_link)
+      ->setHeader(pht('%s Workboard', $header_link))
       ->setUser($viewer)
       ->setNoBackground(true)
-      ->setImage($project->getProfileImageURI())
-      ->setImageURL($this->getApplicationURI('view/'.$project->getID().'/'))
       ->addActionLink($sort_menu)
       ->addActionLink($filter_menu)
       ->addActionLink($manage_menu)
@@ -298,13 +328,15 @@ final class PhabricatorProjectBoardViewController
       ->appendChild($board)
       ->addClass('project-board-wrapper');
 
+    $nav = $this->buildIconNavView($project);
+    $nav->appendChild($header);
+    $nav->appendChild($board_box);
+
     return $this->buildApplicationPage(
-      array(
-        $header,
-        $board_box,
-      ),
+      $nav,
       array(
         'title' => pht('%s Board', $project->getName()),
+        'showFooter' => false,
       ));
   }
 
@@ -540,6 +572,27 @@ final class PhabricatorProjectBoardViewController
       ->setHref($edit_uri)
       ->setDisabled(!$can_edit)
       ->setWorkflow(!$can_edit);
+
+    $can_hide = ($can_edit && !$column->isDefaultColumn());
+    $hide_uri = 'board/'.$this->id.'/hide/'.$column->getID().'/';
+    $hide_uri = $this->getApplicationURI($hide_uri);
+    $hide_uri = $this->getURIWithState($hide_uri);
+
+    if (!$column->isHidden()) {
+      $column_items[] = id(new PhabricatorActionView())
+        ->setName(pht('Hide Column'))
+        ->setIcon('fa-eye-slash')
+        ->setHref($hide_uri)
+        ->setDisabled(!$can_hide)
+        ->setWorkflow(true);
+    } else {
+      $column_items[] = id(new PhabricatorActionView())
+        ->setName(pht('Show Column'))
+        ->setIcon('fa-eye')
+        ->setHref($hide_uri)
+        ->setDisabled(!$can_hide)
+        ->setWorkflow(true);
+    }
 
     $column_menu = id(new PhabricatorActionListView())
       ->setUser($viewer);

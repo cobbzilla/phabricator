@@ -3,10 +3,19 @@
 final class FeedPublisherHTTPWorker extends FeedPushWorker {
 
   protected function doWork() {
+    if (PhabricatorEnv::getEnvConfig('phabricator.silent')) {
+      // Don't invoke hooks in silent mode.
+      return;
+    }
+
     $story = $this->loadFeedStory();
     $data = $story->getStoryData();
 
     $uri = idx($this->getTaskData(), 'uri');
+    $valid_uris = PhabricatorEnv::getEnvConfig('feed.http-hooks');
+    if (!in_array($uri, $valid_uris)) {
+      throw new PhabricatorWorkerPermanentFailureException();
+    }
 
     $post_data = array(
       'storyID'         => $data->getID(),

@@ -10,32 +10,30 @@
   margin: 0 0 12px;
 }
 
-.phabricator-remarkup p:last-child {
-  margin-bottom: 0;
+.PhabricatorMonospaced,
+.phabricator-remarkup .remarkup-code-block .remarkup-code {
+  font: 10px "Menlo", "Consolas", "Monaco", monospace;
+}
+
+.platform-windows .PhabricatorMonospaced,
+.platform-windows .phabricator-remarkup .remarkup-code-block .remarkup-code {
+  font: 11px "Menlo", "Consolas", "Monaco", monospace;
 }
 
 .phabricator-remarkup .remarkup-code-block {
-  margin: 12px;
+  margin: 12px 0;
   white-space: pre;
-  font-family: "Monaco", monospace;
-  font-size: 10px;
 }
 
 .phabricator-remarkup .remarkup-code-header {
-  padding: 6px 8px;
-  background: {$lightyellow};
-  color: rgba(0,0,0,.75);
+  padding: 4px 1px;
+  font-size: 13px;
   font-weight: bold;
-  display: inline-block;
-  border-top: 1px solid {$yellow};
-  border-left: 1px solid {$yellow};
-  border-right: 1px solid {$yellow};
-  margin-bottom: -1px;
 }
 
 .phabricator-remarkup .remarkup-code-block pre {
-  background: {$lightyellow};
-  border: 1px solid {$yellow};
+  background: {$sh-yellowbackground};
+  border: 1px solid {$sh-lightyellowborder};
   display: block;
   color: #000000;
   overflow: auto;
@@ -71,7 +69,7 @@
   margin: 12px 0 12px 30px;
 }
 
-.phabricator-remarkup .remarkup-list-with-checkmarks {
+.phabricator-remarkup ul.remarkup-list-with-checkmarks {
   list-style: none;
   margin-left: 18px;
 }
@@ -94,24 +92,6 @@
 .phabricator-remarkup li.phantom-item,
 .phabricator-remarkup li.phantom-item {
   list-style-type: none;
-}
-
-.phabricator-remarkup h1.remarkup-header:first-child,
-.phabricator-remarkup h2.remarkup-header:first-child,
-.phabricator-remarkup h3.remarkup-header:first-child,
-.phabricator-remarkup h4.remarkup-header:first-child,
-.phabricator-remarkup h5.remarkup-header:first-child,
-.phabricator-remarkup h6.remarkup-header:first-child {
-  margin-top: 0;
-}
-
-.phabricator-remarkup h1.remarkup-header:last-child,
-.phabricator-remarkup h2.remarkup-header:last-child,
-.phabricator-remarkup h3.remarkup-header:last-child,
-.phabricator-remarkup h4.remarkup-header:last-child,
-.phabricator-remarkup h5.remarkup-header:last-child,
-.phabricator-remarkup h6.remarkup-header:last-child {
-  margin-bottom: 0;
 }
 
 .phabricator-remarkup h1.remarkup-header {
@@ -152,11 +132,15 @@
 
 .phabricator-remarkup blockquote {
   border-left: 3px solid {$lightbluetext};
-  color: {$bluetext};
+  color: {$darkbluetext};
   font-style:  italic;
   margin: 4px 0 12px 0;
   padding: 8px 12px;
-  background-color: #F8F9FC;
+  background-color: #F2F4F9;
+}
+
+.phabricator-remarkup blockquote blockquote {
+  background-color: rgba(175,175,175, .1);
 }
 
 .phabricator-remarkup blockquote em {
@@ -202,6 +186,11 @@
 .aphront-panel-preview .phabricator-remarkup-mention-unknown {
   font-weight: bold;
   background: #ffaaaa;
+}
+
+.phabricator-remarkup-mention-nopermission .phui-tag-core {
+  background: {$lightgreybackground};
+  color: {$lightgreytext};
 }
 
 .phabricator-remarkup .remarkup-note {
@@ -311,25 +300,58 @@
 }
 
 .phabricator-remarkup-embed-image-full img {
+  height: auto;
   max-width: 100%;
 }
 
 .phabricator-remarkup table.remarkup-table {
   border-collapse: separate;
   border-spacing: 1px;
-  background: #d3d3d3;
+  background: {$lightblueborder};
   margin: 12px 0;
 }
 
 .phabricator-remarkup table.remarkup-table th {
   font-weight: bold;
-  padding: 3px 6px;
-  background: #e3e3e3;
+  padding: 4px 6px;
+  background: #F8F9FC;
 }
 
 .phabricator-remarkup table.remarkup-table td {
   background: #ffffff;
   padding: 3px 6px;
+}
+
+.phabricator-remarkup p:first-child,
+.phabricator-remarkup ul.remarkup-list:first-child,
+.phabricator-remarkup ol.remarkup-list:first-child,
+.phabricator-remarkup .remarkup-code-block:first-child,
+.phabricator-remarkup h1.remarkup-header:first-child,
+.phabricator-remarkup h2.remarkup-header:first-child,
+.phabricator-remarkup h3.remarkup-header:first-child,
+.phabricator-remarkup h4.remarkup-header:first-child,
+.phabricator-remarkup h5.remarkup-header:first-child,
+.phabricator-remarkup h6.remarkup-header:first-child,
+.phabricator-remarkup blockquote:first-child,
+.phabricator-remarkup table.remarkup-table:first-child,
+.phabricator-remarkup .remarkup-note:first-child {
+  margin-top: 0;
+}
+
+.phabricator-remarkup p:last-child,
+.phabricator-remarkup ul.remarkup-list:last-child,
+.phabricator-remarkup ol.remarkup-list:last-child,
+.phabricator-remarkup .remarkup-code-block:last-child,
+.phabricator-remarkup h1.remarkup-header:last-child,
+.phabricator-remarkup h2.remarkup-header:last-child,
+.phabricator-remarkup h3.remarkup-header:last-child,
+.phabricator-remarkup h4.remarkup-header:last-child,
+.phabricator-remarkup h5.remarkup-header:last-child,
+.phabricator-remarkup h6.remarkup-header:last-child,
+.phabricator-remarkup blockquote:last-child,
+.phabricator-remarkup table.remarkup-table:last-child,
+.phabricator-remarkup .remarkup-note:last-child {
+  margin-bottom: 0;
 }
 
 .remarkup-assist-textarea {
@@ -339,9 +361,27 @@
   border-top-color: {$thinblueborder};
   border-radius: 0;
 
+  box-shadow: none;
+  -webkit-box-shadow: none;
+
+  /* Set line height explicitly so the metrics <var /> and the real textarea
+     are forced to the same value. */
+  line-height: 1.25em;
+
   /* Prevent Safari and Chrome users from dragging the textarea any wider,
      because the top bar won't resize along with it. */
   resize: vertical;
+}
+
+var.remarkup-assist-textarea {
+  /* This is an invisible element used to measure the size of text in the
+     textarea so we can float typeaheads over the cursor position. */
+  display: block;
+  border-color: orange;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  white-space: pre-wrap;
+  visibility: hidden;
 }
 
 .remarkup-assist-textarea:focus {
@@ -420,13 +460,8 @@
 }
 
 .jx-order-mask {
-  background: #ffffff;
+  background: white;
   opacity: 1.0;
-}
-
-.remarkup-assist-textarea {
-  box-shadow: none;
-  -webkit-box-shadow: none;
 }
 
 .remarkup-control-fullscreen-mode {
@@ -452,4 +487,13 @@
 .phabricator-image-macro-hero {
   margin: auto;
   max-width: 95%;
+}
+
+.phabricator-remarkup-macro {
+  height: auto;
+  max-width: 100%;
+}
+
+.remarkup-nav-sequence-arrow {
+  color: {$lightgreytext};
 }

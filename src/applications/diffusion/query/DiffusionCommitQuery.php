@@ -9,6 +9,7 @@ final class DiffusionCommitQuery
   private $defaultRepository;
   private $identifiers;
   private $repositoryIDs;
+  private $repositoryPHIDs;
   private $identifierMap;
 
   private $needAuditRequests;
@@ -20,6 +21,8 @@ final class DiffusionCommitQuery
   const AUDIT_STATUS_ANY       = 'audit-status-any';
   const AUDIT_STATUS_OPEN      = 'audit-status-open';
   const AUDIT_STATUS_CONCERN   = 'audit-status-concern';
+  const AUDIT_STATUS_ACCEPTED  = 'audit-status-accepted';
+  const AUDIT_STATUS_PARTIAL   = 'audit-status-partial';
 
   private $needCommitData;
 
@@ -57,6 +60,15 @@ final class DiffusionCommitQuery
     $this->withDefaultRepository($repository);
     $this->withRepositoryIDs(array($repository->getID()));
     return $this;
+  }
+
+  /**
+   * Look up commits in a specific repository. Prefer
+   * @{method:withRepositoryIDs}; the underyling table is keyed by ID such
+   * that this method requires a separate initial query to map PHID to ID.
+   */
+  public function withRepositoryPHIDs(array $phids) {
+    $this->repositoryPHIDs = $phids;
   }
 
   /**
@@ -171,43 +183,51 @@ final class DiffusionCommitQuery
       ->withIDs($repository_ids)
       ->execute();
 
+    $min_qualified = PhabricatorRepository::MINIMUM_QUALIFIED_HASH;
+    $result = array();
+
     foreach ($commits as $key => $commit) {
       $repo = idx($repos, $commit->getRepositoryID());
       if ($repo) {
         $commit->attachRepository($repo);
       } else {
         unset($commits[$key]);
+        continue;
       }
-    }
 
-    if ($this->identifiers !== null) {
-      $ids = array_fuse($this->identifiers);
-      $min_qualified = PhabricatorRepository::MINIMUM_QUALIFIED_HASH;
-
-      $result = array();
-      foreach ($commits as $commit) {
-        $prefix = 'r'.$commit->getRepository()->getCallsign();
+      // Build the identifierMap
+      if ($this->identifiers !== null) {
+        $ids = array_fuse($this->identifiers);
+        $prefixes = array(
+          'r'.$commit->getRepository()->getCallsign(),
+          'r'.$commit->getRepository()->getCallsign().':',
+          'R'.$commit->getRepository()->getID().':',
+          '', // No prefix is valid too and will only match the commitIdentifier
+        );
         $suffix = $commit->getCommitIdentifier();
 
         if ($commit->getRepository()->isSVN()) {
-          if (isset($ids[$prefix.$suffix])) {
-            $result[$prefix.$suffix][] = $commit;
+          foreach ($prefixes as $prefix) {
+            if (isset($ids[$prefix.$suffix])) {
+              $result[$prefix.$suffix][] = $commit;
+            }
           }
         } else {
           // This awkward construction is so we can link the commits up in O(N)
           // time instead of O(N^2).
           for ($ii = $min_qualified; $ii <= strlen($suffix); $ii++) {
             $part = substr($suffix, 0, $ii);
-            if (isset($ids[$prefix.$part])) {
-              $result[$prefix.$part][] = $commit;
-            }
-            if (isset($ids[$part])) {
-              $result[$part][] = $commit;
+            foreach ($prefixes as $prefix) {
+              if (isset($ids[$prefix.$part])) {
+                $result[$prefix.$part][] = $commit;
+              }
             }
           }
         }
       }
+    }
 
+    if ($result) {
       foreach ($result as $identifier => $matching_commits) {
         if (count($matching_commits) == 1) {
           $result[$identifier] = head($matching_commits);
@@ -217,7 +237,6 @@ final class DiffusionCommitQuery
           unset($result[$identifier]);
         }
       }
-
       $this->identifierMap += $result;
     }
 
@@ -263,6 +282,22 @@ final class DiffusionCommitQuery
   private function buildWhereClause(AphrontDatabaseConnection $conn_r) {
     $where = array();
 
+    if ($this->repositoryPHIDs !== null) {
+      $map_repositories = id (new PhabricatorRepositoryQuery())
+        ->setViewer($this->getViewer())
+        ->withPHIDs($this->repositoryPHIDs)
+        ->execute();
+
+      if (!$map_repositories) {
+        throw new PhabricatorEmptyQueryException();
+      }
+      $repository_ids = mpull($map_repositories, 'getID');
+      if ($this->repositoryIDs !== null) {
+        $repository_ids = array_merge($repository_ids, $this->repositoryIDs);
+      }
+      $this->withRepositoryIDs($repository_ids);
+    }
+
     if ($this->ids !== null) {
       $where[] = qsprintf(
         $conn_r,
@@ -299,9 +334,10 @@ final class DiffusionCommitQuery
       $bare = array();
       foreach ($this->identifiers as $identifier) {
         $matches = null;
-        preg_match('/^(?:r([A-Z]+))?(.*)$/', $identifier, $matches);
-        $repo = nonempty($matches[1], null);
-        $identifier = nonempty($matches[2], null);
+        preg_match('/^(?:[rR]([A-Z]+:?|[0-9]+:))?(.*)$/',
+          $identifier, $matches);
+        $repo = nonempty(rtrim($matches[1], ':'), null);
+        $commit_identifier = nonempty($matches[2], null);
 
         if ($repo === null) {
           if ($this->defaultRepository) {
@@ -310,14 +346,14 @@ final class DiffusionCommitQuery
         }
 
         if ($repo === null) {
-          if (strlen($identifier) < $min_unqualified) {
+          if (strlen($commit_identifier) < $min_unqualified) {
             continue;
           }
-          $bare[] = $identifier;
+          $bare[] = $commit_identifier;
         } else {
           $refs[] = array(
             'callsign' => $repo,
-            'identifier' => $identifier,
+            'identifier' => $commit_identifier,
           );
         }
       }
@@ -334,14 +370,17 @@ final class DiffusionCommitQuery
 
       if ($refs) {
         $callsigns = ipull($refs, 'callsign');
+
         $repos = id(new PhabricatorRepositoryQuery())
           ->setViewer($this->getViewer())
-          ->withCallsigns($callsigns)
-          ->execute();
-        $repos = mpull($repos, null, 'getCallsign');
+          ->withIdentifiers($callsigns);
+        $repos->execute();
+
+        $repos = $repos->getIdentifierMap();
 
         foreach ($refs as $key => $ref) {
           $repo = idx($repos, $ref['callsign']);
+
           if (!$repo) {
             continue;
           }
@@ -411,6 +450,18 @@ final class DiffusionCommitQuery
     $status = $this->auditStatus;
     if ($status !== null) {
       switch ($status) {
+        case self::AUDIT_STATUS_PARTIAL:
+          $where[] = qsprintf(
+            $conn_r,
+            'commit.auditStatus = %d',
+            PhabricatorAuditCommitStatusConstants::PARTIALLY_AUDITED);
+          break;
+        case self::AUDIT_STATUS_ACCEPTED:
+          $where[] = qsprintf(
+            $conn_r,
+            'commit.auditStatus = %d',
+            PhabricatorAuditCommitStatusConstants::FULLY_AUDITED);
+          break;
         case self::AUDIT_STATUS_CONCERN:
           $where[] = qsprintf(
             $conn_r,
@@ -436,6 +487,8 @@ final class DiffusionCommitQuery
             self::AUDIT_STATUS_ANY,
             self::AUDIT_STATUS_OPEN,
             self::AUDIT_STATUS_CONCERN,
+            self::AUDIT_STATUS_ACCEPTED,
+            self::AUDIT_STATUS_PARTIAL,
           );
           throw new Exception(
             "Unknown audit status '{$status}'! Valid statuses are: ".
@@ -448,7 +501,7 @@ final class DiffusionCommitQuery
     return $this->formatWhereClause($where);
   }
 
-  public function didFilterResults(array $filtered) {
+  protected function didFilterResults(array $filtered) {
     if ($this->identifierMap) {
       foreach ($this->identifierMap as $name => $commit) {
         if (isset($filtered[$commit->getPHID()])) {

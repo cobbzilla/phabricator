@@ -96,9 +96,7 @@ final class DifferentialRevisionViewController extends DifferentialController {
     $props = mpull($props, 'getData', 'getName');
 
     $all_changesets = $changesets;
-    $inlines = $this->loadInlineComments(
-      $revision,
-      $all_changesets);
+    $inlines = $revision->loadInlineComments($all_changesets);
 
     $object_phids = array_merge(
       $revision->getReviewers(),
@@ -139,18 +137,19 @@ final class DifferentialRevisionViewController extends DifferentialController {
     $large = $request->getStr('large');
     if (count($changesets) > $limit && !$large) {
       $count = count($changesets);
-      $warning = new AphrontErrorView();
+      $warning = new PHUIInfoView();
       $warning->setTitle('Very Large Diff');
-      $warning->setSeverity(AphrontErrorView::SEVERITY_WARNING);
+      $warning->setSeverity(PHUIInfoView::SEVERITY_WARNING);
       $warning->appendChild(hsprintf(
         '%s <strong>%s</strong>',
         pht(
-          'This diff is very large and affects %s files. Load each file '.
-            'individually.',
+          'This diff is very large and affects %s files. '.
+          'You may load each file individually or ',
           new PhutilNumber($count)),
         phutil_tag(
           'a',
           array(
+            'class' => 'button grey',
             'href' => $request_uri
               ->alter('large', 'true')
               ->setFragment('toc'),
@@ -236,7 +235,7 @@ final class DifferentialRevisionViewController extends DifferentialController {
 
     $whitespace = $request->getStr(
       'whitespace',
-      DifferentialChangesetParser::WHITESPACE_IGNORE_ALL);
+      DifferentialChangesetParser::WHITESPACE_IGNORE_MOST);
 
     $arc_project = $target->getArcanistProject();
     if ($arc_project) {
@@ -259,10 +258,10 @@ final class DifferentialRevisionViewController extends DifferentialController {
       $warning_handle_map,
       $handles);
     if ($revision_warnings) {
-      $revision_warnings = id(new AphrontErrorView())
-        ->setSeverity(AphrontErrorView::SEVERITY_WARNING)
+      $revision_warnings = id(new PHUIInfoView())
+        ->setSeverity(PHUIInfoView::SEVERITY_WARNING)
         ->setErrors($revision_warnings);
-      $revision_detail_box->setErrorView($revision_warnings);
+      $revision_detail_box->setInfoView($revision_warnings);
     }
 
     $comment_view = $this->buildTransactions(
@@ -387,10 +386,10 @@ final class DifferentialRevisionViewController extends DifferentialController {
       $review_warnings = array_mergev($review_warnings);
 
       if ($review_warnings) {
-        $review_warnings_panel = id(new AphrontErrorView())
-          ->setSeverity(AphrontErrorView::SEVERITY_WARNING)
+        $review_warnings_panel = id(new PHUIInfoView())
+          ->setSeverity(PHUIInfoView::SEVERITY_WARNING)
           ->setErrors($review_warnings);
-        $comment_form->setErrorView($review_warnings_panel);
+        $comment_form->setInfoView($review_warnings_panel);
       }
 
       $comment_form->setActions($this->getRevisionCommentActions($revision));
@@ -423,17 +422,43 @@ final class DifferentialRevisionViewController extends DifferentialController {
 
     $page_pane = id(new DifferentialPrimaryPaneView())
       ->setID($pane_id)
-      ->appendChild(array(
-        $comment_view,
-        $diff_history,
-        $warning,
-        $local_view,
-        $toc_view,
-        $other_view,
-        $changeset_view,
-      ));
-    if ($comment_form) {
+      ->appendChild($comment_view);
 
+    $signatures = DifferentialRequiredSignaturesField::loadForRevision(
+      $revision);
+    $missing_signatures = false;
+    foreach ($signatures as $phid => $signed) {
+      if (!$signed) {
+        $missing_signatures = true;
+      }
+    }
+
+    if ($missing_signatures) {
+      $signature_message = id(new PHUIInfoView())
+        ->setErrors(
+          array(
+            array(
+              phutil_tag('strong', array(), pht('Content Hidden:')),
+              ' ',
+              pht(
+                'The content of this revision is hidden until the author has '.
+                'signed all of the required legal agreements.'),
+            ),
+          ));
+      $page_pane->appendChild($signature_message);
+    } else {
+      $page_pane->appendChild(
+        array(
+          $diff_history,
+          $warning,
+          $local_view,
+          $toc_view,
+          $other_view,
+          $changeset_view,
+        ));
+    }
+
+    if ($comment_form) {
       $page_pane->appendChild($comment_form);
     } else {
       // TODO: For now, just use this to get "Login to Comment".
@@ -443,22 +468,15 @@ final class DifferentialRevisionViewController extends DifferentialController {
           ->setRequestURI($request->getRequestURI()));
     }
 
-
     $object_id = 'D'.$revision->getID();
 
-    $top_anchor = id(new PhabricatorAnchorView())
-      ->setAnchorName('top')
-      ->setNavigationMarker(true);
-
     $content = array(
-      $top_anchor,
       $revision_detail_box,
       $page_pane,
     );
 
     $crumbs = $this->buildApplicationCrumbs();
     $crumbs->addTextCrumb($object_id, '/'.$object_id);
-    $crumbs->setActionList($revision_detail->getActionList());
 
     $prefs = $user->loadPreferences();
 
@@ -469,7 +487,6 @@ final class DifferentialRevisionViewController extends DifferentialController {
         false);
 
       $nav = id(new DifferentialChangesetFileTreeSideNavBuilder())
-        ->setAnchorName('top')
         ->setTitle('D'.$revision->getID())
         ->setBaseURI(new PhutilURI('/D'.$revision->getID()))
         ->setCollapsed((bool)$collapsed)
@@ -643,44 +660,6 @@ final class DifferentialRevisionViewController extends DifferentialController {
     return $actions_dict;
   }
 
-  private function loadInlineComments(
-    DifferentialRevision $revision,
-    array &$changesets) {
-    assert_instances_of($changesets, 'DifferentialChangeset');
-
-    $inline_comments = array();
-
-    $inline_comments = id(new DifferentialInlineCommentQuery())
-      ->withRevisionIDs(array($revision->getID()))
-      ->withNotDraft(true)
-      ->execute();
-
-    $load_changesets = array();
-    foreach ($inline_comments as $inline) {
-      $changeset_id = $inline->getChangesetID();
-      if (isset($changesets[$changeset_id])) {
-        continue;
-      }
-      $load_changesets[$changeset_id] = true;
-    }
-
-    $more_changesets = array();
-    if ($load_changesets) {
-      $changeset_ids = array_keys($load_changesets);
-      $more_changesets += id(new DifferentialChangeset())
-        ->loadAllWhere(
-          'id IN (%Ld)',
-          $changeset_ids);
-    }
-
-    if ($more_changesets) {
-      $changesets += $more_changesets;
-      $changesets = msort($changesets, 'getSortKey');
-    }
-
-    return $inline_comments;
-  }
-
   private function loadChangesetsAndVsMap(
     DifferentialDiff $target,
     DifferentialDiff $diff_vs = null,
@@ -825,6 +804,7 @@ final class DifferentialRevisionViewController extends DifferentialController {
     $user = $this->getRequest()->getUser();
 
     $view = id(new DifferentialRevisionListView())
+      ->setHeader(pht('Open Revisions Affecting These Files'))
       ->setRevisions($revisions)
       ->setUser($user);
 
@@ -832,9 +812,7 @@ final class DifferentialRevisionViewController extends DifferentialController {
     $handles = $this->loadViewerHandles($phids);
     $view->setHandles($handles);
 
-    return id(new PHUIObjectBoxView())
-      ->setHeaderText(pht('Open Revisions Affecting These Files'))
-      ->appendChild($view);
+    return $view;
   }
 
 
@@ -913,12 +891,10 @@ final class DifferentialRevisionViewController extends DifferentialController {
       ));
 
     $unguarded = AphrontWriteGuard::beginScopedUnguardedWrites();
-      $file->attachToObject(
-        $this->getRequest()->getUser(),
-        $revision->getPHID());
+      $file->attachToObject($revision->getPHID());
     unset($unguarded);
 
-    return id(new AphrontRedirectResponse())->setURI($file->getBestURI());
+    return $file->getRedirectResponse();
   }
 
   private function buildTransactions(
@@ -927,22 +903,14 @@ final class DifferentialRevisionViewController extends DifferentialController {
     DifferentialDiff $right_diff,
     array $changesets) {
 
-    $viewer = $this->getRequest()->getUser();
-
-    $xactions = id(new DifferentialTransactionQuery())
-      ->setViewer($viewer)
-      ->withObjectPHIDs(array($revision->getPHID()))
-      ->needComments(true)
-      ->execute();
-
-    $timeline = id(new DifferentialTransactionView())
-      ->setUser($viewer)
-      ->setObjectPHID($revision->getPHID())
-      ->setChangesets($changesets)
-      ->setRevision($revision)
-      ->setLeftDiff($left_diff)
-      ->setRightDiff($right_diff)
-      ->setTransactions($xactions);
+    $timeline = $this->buildTransactionTimeline(
+      $revision,
+      new DifferentialTransactionQuery(),
+      $engine = null,
+      array(
+        'left' => $left_diff->getID(),
+        'right' => $right_diff->getID(),
+      ));
 
     return $timeline;
   }

@@ -37,6 +37,18 @@ final class PonderQuestionTransaction
     return $phids;
   }
 
+  public function getRemarkupBlocks() {
+    $blocks = parent::getRemarkupBlocks();
+
+    switch ($this->getTransactionType()) {
+      case self::TYPE_CONTENT:
+        $blocks[] = $this->getNewValue();
+        break;
+    }
+
+    return $blocks;
+  }
+
   public function getTitle() {
     $author_phid = $this->getAuthorPHID();
     $object_phid = $this->getObjectPHID();
@@ -64,10 +76,11 @@ final class PonderQuestionTransaction
       case self::TYPE_ANSWERS:
         $answer_handle = $this->getHandle($this->getNewAnswerPHID());
         $question_handle = $this->getHandle($object_phid);
+
         return pht(
           '%s answered %s',
           $this->renderHandleLink($author_phid),
-          $answer_handle->renderLink($question_handle->getFullName()));
+          $this->renderHandleLink($object_phid));
       case self::TYPE_STATUS:
         switch ($new) {
           case PonderQuestionStatus::STATUS_OPEN:
@@ -121,7 +134,7 @@ final class PonderQuestionTransaction
           case PonderQuestionStatus::STATUS_OPEN:
             return PhabricatorTransactions::COLOR_GREEN;
           case PonderQuestionStatus::STATUS_CLOSED:
-            return PhabricatorTransactions::COLOR_BLACK;
+            return PhabricatorTransactions::COLOR_INDIGO;
         }
     }
   }
@@ -189,7 +202,7 @@ final class PonderQuestionTransaction
     return parent::shouldHide();
   }
 
-  public function getTitleForFeed(PhabricatorFeedStory $story) {
+  public function getTitleForFeed() {
     $author_phid = $this->getAuthorPHID();
     $object_phid = $this->getObjectPHID();
 
@@ -237,7 +250,7 @@ final class PonderQuestionTransaction
         }
     }
 
-    return parent::getTitleForFeed($story);
+    return parent::getTitleForFeed();
   }
 
   public function getBodyForFeed(PhabricatorFeedStory $story) {
@@ -251,14 +264,18 @@ final class PonderQuestionTransaction
         if ($old === null) {
           $question = $story->getObject($this->getObjectPHID());
           return phutil_escape_html_newlines(
-            phutil_utf8_shorten($question->getContent(), 128));
+            id(new PhutilUTF8StringTruncator())
+            ->setMaximumGlyphs(128)
+            ->truncateString($question->getContent()));
         }
         break;
       case self::TYPE_ANSWERS:
         $answer = $this->getNewAnswerObject($story);
         if ($answer) {
           return phutil_escape_html_newlines(
-            phutil_utf8_shorten($answer->getContent(), 128));
+            id(new PhutilUTF8StringTruncator())
+            ->setMaximumGlyphs(128)
+            ->truncateString($answer->getContent()));
         }
         break;
     }

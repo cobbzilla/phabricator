@@ -1,17 +1,33 @@
 <?php
 
 final class DivinerLiveBook extends DivinerDAO
-  implements PhabricatorPolicyInterface {
+  implements
+    PhabricatorPolicyInterface,
+    PhabricatorDestructibleInterface {
 
   protected $name;
   protected $viewPolicy;
   protected $configurationData = array();
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
         'configurationData' => self::SERIALIZATION_JSON,
+      ),
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'name' => 'text64',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_phid' => null,
+        'phid' => array(
+          'columns' => array('phid'),
+          'unique' => true,
+        ),
+        'name' => array(
+          'columns' => array('name'),
+          'unique' => true,
+        ),
       ),
     ) + parent::getConfiguration();
   }
@@ -43,7 +59,7 @@ final class DivinerLiveBook extends DivinerDAO
   }
 
   public function getGroupName($group) {
-    $groups = $this->getConfig('groups');
+    $groups = $this->getConfig('groups', array());
     $spec = idx($groups, $group, array());
     return idx($spec, 'name', $group);
   }
@@ -66,6 +82,27 @@ final class DivinerLiveBook extends DivinerDAO
 
   public function describeAutomaticCapability($capability) {
     return null;
+  }
+
+/* -(  PhabricatorDestructibleInterface  )----------------------------------- */
+
+  public function destroyObjectPermanently(
+    PhabricatorDestructionEngine $engine) {
+
+    $this->openTransaction();
+      $atoms = id(new DivinerAtomQuery())
+        ->setViewer(PhabricatorUser::getOmnipotentUser())
+        ->withBookPHIDs(array($this->getPHID()))
+        ->withIncludeGhosts(true)
+        ->withIncludeUndocumentable(true)
+        ->execute();
+
+      foreach ($atoms as $atom) {
+        $engine->destroyObject($atom);
+      }
+
+      $this->delete();
+    $this->saveTransaction();
   }
 
 }

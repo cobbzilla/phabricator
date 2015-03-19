@@ -130,7 +130,7 @@ final class PhabricatorOwnersListController
         }
         $packages = $package->loadAllFromArray($data);
 
-        $header = pht('Owned Packages');
+        $header = pht('Project Packages');
         $nodata = pht('No owned packages');
         break;
       case 'all':
@@ -198,15 +198,19 @@ final class PhabricatorOwnersListController
           ->setValue(pht('Search for Packages')));
 
     $filter->appendChild($form);
+    $title = pht('Package Index');
+
+    $crumbs = $this->buildApplicationCrumbs();
+    $crumbs->addTextCrumb($header);
+    $crumbs->setBorder(true);
 
     $nav = $this->buildSideNavView();
+    $nav->appendChild($crumbs);
     $nav->appendChild($filter);
     $nav->appendChild($content);
 
     return $this->buildApplicationPage(
-      array(
-        $nav,
-      ),
+      $nav,
       array(
         'title' => pht('Package Index'),
       ));
@@ -308,9 +312,9 @@ final class PhabricatorOwnersListController
         phutil_tag(
           'a',
           array(
-            'href' => '/audit/view/packagecommits/?phid='.$package->getPHID(),
+            'href' => '/audit/?auditorPHIDs='.$package->getPHID(),
           ),
-          pht('Related Commits'))
+          pht('Related Commits')),
       );
     }
 
@@ -330,10 +334,9 @@ final class PhabricatorOwnersListController
         'narrow',
       ));
 
-    $panel = new AphrontPanelView();
-    $panel->setHeader($header);
+    $panel = new PHUIObjectBoxView();
+    $panel->setHeaderText($header);
     $panel->appendChild($table);
-    $panel->setNoBackground();
 
     return $panel;
   }

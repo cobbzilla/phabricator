@@ -53,6 +53,10 @@ abstract class PhabricatorController extends AphrontController {
     return PhabricatorEnv::getEnvConfig('security.require-multi-factor-auth');
   }
 
+  public function shouldAllowLegallyNonCompliantUsers() {
+    return false;
+  }
+
   public function willBeginExecution() {
     $request = $this->getRequest();
 
@@ -96,13 +100,9 @@ abstract class PhabricatorController extends AphrontController {
       $request->setUser($user);
     }
 
-    $translation = $user->getTranslation();
-    if ($translation &&
-        $translation != PhabricatorEnv::getEnvConfig('translation.provider')) {
-      $translation = newv($translation, array());
-      PhutilTranslator::getInstance()
-        ->setLanguage($translation->getLanguage())
-        ->addTranslations($translation->getTranslations());
+    $locale_code = $user->getTranslation();
+    if ($locale_code) {
+      PhabricatorEnv::setLocaleCode($locale_code);
     }
 
     $preferences = $user->loadPreferences();
@@ -137,11 +137,11 @@ abstract class PhabricatorController extends AphrontController {
 
     if ($this->shouldRequireEnabledUser()) {
       if ($user->isLoggedIn() && !$user->getIsApproved()) {
-        $controller = new PhabricatorAuthNeedsApprovalController($request);
+        $controller = new PhabricatorAuthNeedsApprovalController();
         return $this->delegateToController($controller);
       }
       if ($user->getIsDisabled()) {
-        $controller = new PhabricatorDisabledUserController($request);
+        $controller = new PhabricatorDisabledUserController();
         return $this->delegateToController($controller);
       }
     }
@@ -166,7 +166,7 @@ abstract class PhabricatorController extends AphrontController {
     if (!$this->shouldAllowPartialSessions()) {
       if ($user->hasSession() &&
           $user->getSession()->getIsPartial()) {
-        $login_controller = new PhabricatorAuthFinishController($request);
+        $login_controller = new PhabricatorAuthFinishController();
         $this->setCurrentApplication($auth_application);
         return $this->delegateToController($login_controller);
       }
@@ -180,8 +180,7 @@ abstract class PhabricatorController extends AphrontController {
       // and require MFA enrollment.
       $user->updateMultiFactorEnrollment();
       if (!$user->getIsEnrolledInMultiFactor()) {
-        $mfa_controller = new PhabricatorAuthNeedsMultiFactorController(
-          $request);
+        $mfa_controller = new PhabricatorAuthNeedsMultiFactorController();
         $this->setCurrentApplication($auth_application);
         return $this->delegateToController($mfa_controller);
       }
@@ -198,7 +197,7 @@ abstract class PhabricatorController extends AphrontController {
       // If this controller isn't public, and the user isn't logged in, require
       // login.
       if (!$allow_public && !$user->isLoggedIn()) {
-        $login_controller = new PhabricatorAuthStartController($request);
+        $login_controller = new PhabricatorAuthStartController();
         $this->setCurrentApplication($auth_application);
         return $this->delegateToController($login_controller);
       }
@@ -206,7 +205,7 @@ abstract class PhabricatorController extends AphrontController {
       if ($user->isLoggedIn()) {
         if ($this->shouldRequireEmailVerification()) {
           if (!$user->getIsEmailVerified()) {
-            $controller = new PhabricatorMustVerifyEmailController($request);
+            $controller = new PhabricatorMustVerifyEmailController();
             $this->setCurrentApplication($auth_application);
             return $this->delegateToController($controller);
           }
@@ -223,6 +222,47 @@ abstract class PhabricatorController extends AphrontController {
           ->setViewer($user)
           ->withPHIDs(array($application->getPHID()))
           ->executeOne();
+      }
+    }
+
+
+    if (!$this->shouldAllowLegallyNonCompliantUsers()) {
+      $legalpad_class = 'PhabricatorLegalpadApplication';
+      $legalpad = id(new PhabricatorApplicationQuery())
+        ->setViewer($user)
+        ->withClasses(array($legalpad_class))
+        ->withInstalled(true)
+        ->execute();
+      $legalpad = head($legalpad);
+
+      $doc_query = id(new LegalpadDocumentQuery())
+        ->setViewer($user)
+        ->withSignatureRequired(1)
+        ->needViewerSignatures(true);
+
+      if ($user->hasSession() &&
+          !$user->getSession()->getIsPartial() &&
+          !$user->getSession()->getSignedLegalpadDocuments() &&
+          $user->isLoggedIn() &&
+          $legalpad) {
+
+        $sign_docs = $doc_query->execute();
+        $must_sign_docs = array();
+        foreach ($sign_docs as $sign_doc) {
+          if (!$sign_doc->getUserSignature($user->getPHID())) {
+            $must_sign_docs[] = $sign_doc;
+          }
+        }
+        if ($must_sign_docs) {
+          $controller = new LegalpadDocumentSignController();
+          $this->getRequest()->setURIMap(array(
+            'id' => head($must_sign_docs)->getID(),));
+          $this->setCurrentApplication($legalpad);
+          return $this->delegateToController($controller);
+        } else {
+          $engine = id(new PhabricatorAuthSessionEngine())
+            ->signLegalpadDocuments($user, $sign_docs);
+        }
       }
     }
 
@@ -243,8 +283,18 @@ abstract class PhabricatorController extends AphrontController {
   public function buildStandardPageResponse($view, array $data) {
     $page = $this->buildStandardPageView();
     $page->appendChild($view);
-    $response = new AphrontWebpageResponse();
-    $response->setContent($page->render());
+    return $this->buildPageResponse($page);
+  }
+
+  private function buildPageResponse($page) {
+    if ($this->getRequest()->isQuicksand()) {
+      $response = id(new AphrontAjaxResponse())
+        ->setContent($page->renderForQuicksand());
+    } else {
+      $response = id(new AphrontWebpageResponse())
+        ->setContent($page->render());
+    }
+
     return $response;
   }
 
@@ -296,6 +346,7 @@ abstract class PhabricatorController extends AphrontController {
       $page->setDeviceReady(true);
     }
 
+    $page->setShowFooter(idx($options, 'showFooter', true));
     $page->setShowChrome(idx($options, 'chrome', true));
 
     $application_menu = $this->buildApplicationMenu();
@@ -303,8 +354,7 @@ abstract class PhabricatorController extends AphrontController {
       $page->setApplicationMenu($application_menu);
     }
 
-    $response = new AphrontWebpageResponse();
-    return $response->setContent($page->render());
+    return $this->buildPageResponse($page);
   }
 
   public function didProcessRequest($response) {
@@ -331,7 +381,7 @@ abstract class PhabricatorController extends AphrontController {
     }
 
     if ($response instanceof AphrontDialogResponse) {
-      if (!$request->isAjax()) {
+      if (!$request->isAjax() && !$request->isQuicksand()) {
         $dialog = $response->getDialog();
 
         $title = $dialog->getTitle();
@@ -425,7 +475,7 @@ abstract class PhabricatorController extends AphrontController {
       array_filter($phids));
   }
 
-  protected function buildApplicationMenu() {
+  public function buildApplicationMenu() {
     return null;
   }
 
@@ -434,18 +484,18 @@ abstract class PhabricatorController extends AphrontController {
 
     $application = $this->getCurrentApplication();
     if ($application) {
-      $sprite = $application->getIconName();
-      if (!$sprite) {
-        $sprite = 'application';
+      $icon = $application->getFontIcon();
+      if (!$icon) {
+        $icon = 'fa-puzzle';
       }
 
-      $crumbs[] = id(new PhabricatorCrumbView())
+      $crumbs[] = id(new PHUICrumbView())
         ->setHref($this->getApplicationURI())
-        ->setAural($application->getName())
-        ->setIcon($sprite);
+        ->setName($application->getName())
+        ->setIcon($icon);
     }
 
-    $view = new PhabricatorCrumbsView();
+    $view = new PHUICrumbsView();
     foreach ($crumbs as $crumb) {
       $view->addCrumb($crumb);
     }
@@ -517,13 +567,61 @@ abstract class PhabricatorController extends AphrontController {
    *
    * @return AphrontDialogView New dialog.
    */
-  protected function newDialog() {
+  public function newDialog() {
     $submit_uri = new PhutilURI($this->getRequest()->getRequestURI());
     $submit_uri = $submit_uri->getPath();
 
     return id(new AphrontDialogView())
       ->setUser($this->getRequest()->getUser())
       ->setSubmitURI($submit_uri);
+  }
+
+  protected function buildTransactionTimeline(
+    PhabricatorApplicationTransactionInterface $object,
+    PhabricatorApplicationTransactionQuery $query,
+    PhabricatorMarkupEngine $engine = null,
+    $render_data = array()) {
+
+    $viewer = $this->getRequest()->getUser();
+    $xaction = $object->getApplicationTransactionTemplate();
+    $view = $xaction->getApplicationTransactionViewObject();
+
+    $pager = id(new AphrontCursorPagerView())
+      ->readFromRequest($this->getRequest())
+      ->setURI(new PhutilURI(
+        '/transactions/showolder/'.$object->getPHID().'/'));
+
+    $xactions = $query
+      ->setViewer($viewer)
+      ->withObjectPHIDs(array($object->getPHID()))
+      ->needComments(true)
+      ->setReversePaging(false)
+      ->executeWithCursorPager($pager);
+    $xactions = array_reverse($xactions);
+
+    if ($engine) {
+      foreach ($xactions as $xaction) {
+        if ($xaction->getComment()) {
+          $engine->addObject(
+            $xaction->getComment(),
+            PhabricatorApplicationTransactionComment::MARKUP_FIELD_COMMENT);
+        }
+      }
+      $engine->process();
+      $view->setMarkupEngine($engine);
+    }
+
+    $timeline = $view
+      ->setUser($viewer)
+      ->setObjectPHID($object->getPHID())
+      ->setTransactions($xactions)
+      ->setPager($pager)
+      ->setRenderData($render_data)
+      ->setQuoteTargetID($this->getRequest()->getStr('quoteTargetID'))
+      ->setQuoteRef($this->getRequest()->getStr('quoteRef'));
+    $object->willRenderTimeline($timeline, $this->getRequest());
+
+    return $timeline;
   }
 
 }

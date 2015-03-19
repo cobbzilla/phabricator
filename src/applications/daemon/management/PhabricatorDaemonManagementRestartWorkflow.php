@@ -3,7 +3,7 @@
 final class PhabricatorDaemonManagementRestartWorkflow
   extends PhabricatorDaemonManagementWorkflow {
 
-  public function didConstruct() {
+  protected function didConstruct() {
     $this
       ->setName('restart')
       ->setSynopsis(
@@ -19,16 +19,38 @@ final class PhabricatorDaemonManagementRestartWorkflow
               'seconds. Defaults to __15__ seconds.'),
             'default' => 15,
           ),
+          array(
+            'name' => 'gently',
+            'help' => pht(
+              'Ignore running processes that look like daemons but do not '.
+              'have corresponding PID files.'),
+          ),
+          array(
+            'name' => 'force',
+            'help' => pht(
+              'Also stop running processes that look like daemons but do '.
+              'not have corresponding PID files.'),
+          ),
+          $this->getAutoscaleReserveArgument(),
         ));
   }
 
   public function execute(PhutilArgumentParser $args) {
-    $graceful = $args->getArg('graceful');
-    $err = $this->executeStopCommand(array(), $graceful);
+    $err = $this->executeStopCommand(
+      array(),
+      array(
+        'graceful' => $args->getArg('graceful'),
+        'force' => $args->getArg('force'),
+        'gently' => $args->getArg('gently'),
+      ));
     if ($err) {
       return $err;
     }
-    return $this->executeStartCommand();
+
+    return $this->executeStartCommand(
+      array(
+        'reserve' => (float)$args->getArg('autoscale-reserve', 0.0),
+      ));
   }
 
 }

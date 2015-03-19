@@ -7,6 +7,7 @@ abstract class PhabricatorApplicationTransactionQuery
   private $objectPHIDs;
   private $authorPHIDs;
   private $transactionTypes;
+  private $reversePaging = true;
 
   private $needComments = true;
   private $needHandles  = true;
@@ -17,8 +18,13 @@ abstract class PhabricatorApplicationTransactionQuery
     return array();
   }
 
+  public function setReversePaging($bool) {
+    $this->reversePaging = $bool;
+    return $this;
+  }
+
   protected function getReversePaging() {
-    return true;
+    return $this->reversePaging;
   }
 
   public function withPHIDs(array $phids) {
@@ -74,11 +80,12 @@ abstract class PhabricatorApplicationTransactionQuery
 
       $comments = array();
       if ($comment_phids) {
-        $comments = id(new PhabricatorApplicationTransactionCommentQuery())
-          ->setTemplate($table->getApplicationTransactionCommentObject())
-          ->setViewer($this->getViewer())
-          ->withPHIDs($comment_phids)
-          ->execute();
+        $comments =
+          id(new PhabricatorApplicationTransactionTemplatedCommentQuery())
+            ->setTemplate($table->getApplicationTransactionCommentObject())
+            ->setViewer($this->getViewer())
+            ->withPHIDs($comment_phids)
+            ->execute();
         $comments = mpull($comments, null, 'getPHID');
       }
 
@@ -119,7 +126,7 @@ abstract class PhabricatorApplicationTransactionQuery
 
     // NOTE: We have to do this after loading objects, because the objects
     // may help determine which handles are required (for example, in the case
-    // of custom fields.
+    // of custom fields).
 
     if ($this->needHandles) {
       $phids = array();

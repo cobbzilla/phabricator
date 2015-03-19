@@ -1,10 +1,12 @@
 <?php
 
 /**
- * @task uri Repository URI Management
+ * @task uri        Repository URI Management
+ * @task autoclose  Autoclose
  */
 final class PhabricatorRepository extends PhabricatorRepositoryDAO
   implements
+    PhabricatorApplicationTransactionInterface,
     PhabricatorPolicyInterface,
     PhabricatorFlaggableInterface,
     PhabricatorMarkupInterface,
@@ -28,10 +30,18 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
   const TABLE_BADCOMMIT = 'repository_badcommit';
   const TABLE_LINTMESSAGE = 'repository_lintmessage';
   const TABLE_PARENTS = 'repository_parents';
+  const TABLE_COVERAGE = 'repository_coverage';
 
   const SERVE_OFF = 'off';
   const SERVE_READONLY = 'readonly';
   const SERVE_READWRITE = 'readwrite';
+
+  const BECAUSE_REPOSITORY_IMPORTING = 'auto/importing';
+  const BECAUSE_AUTOCLOSE_DISABLED = 'auto/disabled';
+  const BECAUSE_NOT_ON_AUTOCLOSE_BRANCH = 'auto/nobranch';
+  const BECAUSE_BRANCH_UNTRACKED = 'auto/notrack';
+  const BECAUSE_BRANCH_NOT_AUTOCLOSE = 'auto/noclose';
+  const BECAUSE_AUTOCLOSE_FORCED = 'auto/forced';
 
   protected $name;
   protected $callsign;
@@ -43,6 +53,7 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
   protected $versionControlSystem;
   protected $details = array();
   protected $credentialPHID;
+  protected $almanacServicePHID;
 
   private $commitCount = self::ATTACHABLE;
   private $mostRecentCommit = self::ATTACHABLE;
@@ -58,17 +69,49 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
     $edit_policy = $app->getPolicy(DiffusionDefaultEditCapability::CAPABILITY);
     $push_policy = $app->getPolicy(DiffusionDefaultPushCapability::CAPABILITY);
 
-    return id(new PhabricatorRepository())
+    $repository = id(new PhabricatorRepository())
       ->setViewPolicy($view_policy)
       ->setEditPolicy($edit_policy)
       ->setPushPolicy($push_policy);
+
+    // Put the repository in "Importing" mode until we finish
+    // parsing it.
+    $repository->setDetail('importing', true);
+
+    return $repository;
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
       self::CONFIG_SERIALIZATION => array(
         'details' => self::SERIALIZATION_JSON,
+      ),
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'name' => 'sort255',
+        'callsign' => 'sort32',
+        'versionControlSystem' => 'text32',
+        'uuid' => 'text64?',
+        'pushPolicy' => 'policy',
+        'credentialPHID' => 'phid?',
+        'almanacServicePHID' => 'phid?',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_phid' => null,
+        'phid' => array(
+          'columns' => array('phid'),
+          'unique' => true,
+        ),
+        'callsign' => array(
+          'columns' => array('callsign'),
+          'unique' => true,
+        ),
+        'key_name' => array(
+          'columns' => array('name(128)'),
+        ),
+        'key_vcs' => array(
+          'columns' => array('versionControlSystem'),
+        ),
       ),
     ) + parent::getConfiguration();
   }
@@ -570,73 +613,51 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
     $is_git = ($vcs == PhabricatorRepositoryType::REPOSITORY_TYPE_GIT);
 
     $use_filter = ($is_git);
+    if (!$use_filter) {
+      // If this VCS doesn't use filters, pass everything through.
+      return true;
+    }
 
-    if ($use_filter) {
-      $filter = $this->getDetail($filter_key, array());
-      if ($filter && empty($filter[$branch])) {
-        return false;
+
+    $filter = $this->getDetail($filter_key, array());
+
+    // If there's no filter set, let everything through.
+    if (!$filter) {
+      return true;
+    }
+
+    // If this branch isn't literally named `regexp(...)`, and it's in the
+    // filter list, let it through.
+    if (isset($filter[$branch])) {
+      if (self::extractBranchRegexp($branch) === null) {
+        return true;
       }
     }
 
-    // By default, all branches pass.
-    return true;
+    // If the branch matches a regexp, let it through.
+    foreach ($filter as $pattern => $ignored) {
+      $regexp = self::extractBranchRegexp($pattern);
+      if ($regexp !== null) {
+        if (preg_match($regexp, $branch)) {
+          return true;
+        }
+      }
+    }
+
+    // Nothing matched, so filter this branch out.
+    return false;
+  }
+
+  public static function extractBranchRegexp($pattern) {
+    $matches = null;
+    if (preg_match('/^regexp\\((.*)\\)\z/', $pattern, $matches)) {
+      return $matches[1];
+    }
+    return null;
   }
 
   public function shouldTrackBranch($branch) {
     return $this->isBranchInFilter($branch, 'branch-filter');
-  }
-
-  public function shouldAutocloseBranch($branch) {
-    if ($this->isImporting()) {
-      return false;
-    }
-
-    if ($this->getDetail('disable-autoclose', false)) {
-      return false;
-    }
-
-    if (!$this->shouldTrackBranch($branch)) {
-      return false;
-    }
-
-    return $this->isBranchInFilter($branch, 'close-commits-filter');
-  }
-
-  public function shouldAutocloseCommit(
-    PhabricatorRepositoryCommit $commit,
-    PhabricatorRepositoryCommitData $data) {
-
-    if ($this->getDetail('disable-autoclose', false)) {
-      return false;
-    }
-
-    switch ($this->getVersionControlSystem()) {
-      case PhabricatorRepositoryType::REPOSITORY_TYPE_SVN:
-        return true;
-      case PhabricatorRepositoryType::REPOSITORY_TYPE_GIT:
-        break;
-      case PhabricatorRepositoryType::REPOSITORY_TYPE_MERCURIAL:
-        return true;
-      default:
-        throw new Exception('Unrecognized version control system.');
-    }
-
-    $closeable_flag = PhabricatorRepositoryCommit::IMPORTED_CLOSEABLE;
-    if ($commit->isPartiallyImported($closeable_flag)) {
-      return true;
-    }
-
-    // TODO: Remove this eventually, it's no longer written to by the import
-    // pipeline (however, old tasks may still be queued which don't reflect
-    // the new data format).
-    $branches = $data->getCommitDetail('seenOnBranches', array());
-    foreach ($branches as $branch) {
-      if ($this->shouldAutocloseBranch($branch)) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   public function formatCommitName($commit_identifier) {
@@ -658,6 +679,144 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
 
   public function isImporting() {
     return (bool)$this->getDetail('importing', false);
+  }
+
+
+  /**
+   * Should this repository publish feed, notifications, audits, and email?
+   *
+   * We do not publish information about repositories during initial import,
+   * or if the repository has been set not to publish.
+   */
+  public function shouldPublish() {
+    if ($this->isImporting()) {
+      return false;
+    }
+
+    if ($this->getDetail('disable-herald')) {
+      return false;
+    }
+
+    return true;
+  }
+
+
+/* -(  Autoclose  )---------------------------------------------------------- */
+
+
+  /**
+   * Determine if autoclose is active for a branch.
+   *
+   * For more details about why, use @{method:shouldSkipAutocloseBranch}.
+   *
+   * @param string Branch name to check.
+   * @return bool True if autoclose is active for the branch.
+   * @task autoclose
+   */
+  public function shouldAutocloseBranch($branch) {
+    return ($this->shouldSkipAutocloseBranch($branch) === null);
+  }
+
+  /**
+   * Determine if autoclose is active for a commit.
+   *
+   * For more details about why, use @{method:shouldSkipAutocloseCommit}.
+   *
+   * @param PhabricatorRepositoryCommit Commit to check.
+   * @return bool True if autoclose is active for the commit.
+   * @task autoclose
+   */
+  public function shouldAutocloseCommit(PhabricatorRepositoryCommit $commit) {
+    return ($this->shouldSkipAutocloseCommit($commit) === null);
+  }
+
+
+  /**
+   * Determine why autoclose should be skipped for a branch.
+   *
+   * This method gives a detailed reason why autoclose will be skipped. To
+   * perform a simple test, use @{method:shouldAutocloseBranch}.
+   *
+   * @param string Branch name to check.
+   * @return const|null Constant identifying reason to skip this branch, or null
+   *   if autoclose is active.
+   * @task autoclose
+   */
+  public function shouldSkipAutocloseBranch($branch) {
+    $all_reason = $this->shouldSkipAllAutoclose();
+    if ($all_reason) {
+      return $all_reason;
+    }
+
+    if (!$this->shouldTrackBranch($branch)) {
+      return self::BECAUSE_BRANCH_UNTRACKED;
+    }
+
+    if (!$this->isBranchInFilter($branch, 'close-commits-filter')) {
+      return self::BECAUSE_BRANCH_NOT_AUTOCLOSE;
+    }
+
+    return null;
+  }
+
+
+  /**
+   * Determine why autoclose should be skipped for a commit.
+   *
+   * This method gives a detailed reason why autoclose will be skipped. To
+   * perform a simple test, use @{method:shouldAutocloseCommit}.
+   *
+   * @param PhabricatorRepositoryCommit Commit to check.
+   * @return const|null Constant identifying reason to skip this commit, or null
+   *   if autoclose is active.
+   * @task autoclose
+   */
+  public function shouldSkipAutocloseCommit(
+    PhabricatorRepositoryCommit $commit) {
+
+    $all_reason = $this->shouldSkipAllAutoclose();
+    if ($all_reason) {
+      return $all_reason;
+    }
+
+    switch ($this->getVersionControlSystem()) {
+      case PhabricatorRepositoryType::REPOSITORY_TYPE_SVN:
+      case PhabricatorRepositoryType::REPOSITORY_TYPE_MERCURIAL:
+        return null;
+      case PhabricatorRepositoryType::REPOSITORY_TYPE_GIT:
+        break;
+      default:
+        throw new Exception('Unrecognized version control system.');
+    }
+
+    $closeable_flag = PhabricatorRepositoryCommit::IMPORTED_CLOSEABLE;
+    if (!$commit->isPartiallyImported($closeable_flag)) {
+      return self::BECAUSE_NOT_ON_AUTOCLOSE_BRANCH;
+    }
+
+    return null;
+  }
+
+
+  /**
+   * Determine why all autoclose operations should be skipped for this
+   * repository.
+   *
+   * @return const|null Constant identifying reason to skip all autoclose
+   *   operations, or null if autoclose operations are not blocked at the
+   *   repository level.
+   * @task autoclose
+   */
+  private function shouldSkipAllAutoclose() {
+    if ($this->isImporting()) {
+      return self::BECAUSE_REPOSITORY_IMPORTING;
+    }
+
+    if ($this->getDetail('disable-autoclose', false)) {
+      return self::BECAUSE_AUTOCLOSE_DISABLED;
+    }
+
+    return null;
   }
 
 
@@ -870,6 +1029,11 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
     $ssh_user = PhabricatorEnv::getEnvConfig('diffusion.ssh-user');
     if ($ssh_user) {
       $uri->setUser($ssh_user);
+    }
+
+    $ssh_host = PhabricatorEnv::getEnvConfig('diffusion.ssh-host');
+    if (strlen($ssh_host)) {
+      $uri->setDomain($ssh_host);
     }
 
     $uri->setPort(PhabricatorEnv::getEnvConfig('diffusion.ssh-port'));
@@ -1316,6 +1480,306 @@ final class PhabricatorRepository extends PhabricatorRepositoryDAO
     }
 
     return true;
+  }
+
+
+  /**
+   * Load the pull frequency for this repository, based on the time since the
+   * last activity.
+   *
+   * We pull rarely used repositories less frequently. This finds the most
+   * recent commit which is older than the current time (which prevents us from
+   * spinning on repositories with a silly commit post-dated to some time in
+   * 2037). We adjust the pull frequency based on when the most recent commit
+   * occurred.
+   *
+   * @param   int   The minimum update interval to use, in seconds.
+   * @return  int   Repository update interval, in seconds.
+   */
+  public function loadUpdateInterval($minimum = 15) {
+    // If a repository is still importing, always pull it as frequently as
+    // possible. This prevents us from hanging for a long time at 99.9% when
+    // importing an inactive repository.
+    if ($this->isImporting()) {
+      return $minimum;
+    }
+
+    $window_start = (PhabricatorTime::getNow() + $minimum);
+
+    $table = id(new PhabricatorRepositoryCommit());
+    $last_commit = queryfx_one(
+      $table->establishConnection('r'),
+      'SELECT epoch FROM %T
+        WHERE repositoryID = %d AND epoch <= %d
+        ORDER BY epoch DESC LIMIT 1',
+      $table->getTableName(),
+      $this->getID(),
+      $window_start);
+    if ($last_commit) {
+      $time_since_commit = ($window_start - $last_commit['epoch']);
+
+      $last_few_days = phutil_units('3 days in seconds');
+
+      if ($time_since_commit <= $last_few_days) {
+        // For repositories with activity in the recent past, we wait one
+        // extra second for every 10 minutes since the last commit. This
+        // shorter backoff is intended to handle weekends and other short
+        // breaks from development.
+        $smart_wait = ($time_since_commit / 600);
+      } else {
+        // For repositories without recent activity, we wait one extra second
+        // for every 4 minutes since the last commit. This longer backoff
+        // handles rarely used repositories, up to the maximum.
+        $smart_wait = ($time_since_commit / 240);
+      }
+
+      // We'll never wait more than 6 hours to pull a repository.
+      $longest_wait = phutil_units('6 hours in seconds');
+      $smart_wait = min($smart_wait, $longest_wait);
+
+      $smart_wait = max($minimum, $smart_wait);
+    } else {
+      $smart_wait = $minimum;
+    }
+
+    return $smart_wait;
+  }
+
+
+  /**
+   * Retrieve the sevice URI for the device hosting this repository.
+   *
+   * See @{method:newConduitClient} for a general discussion of interacting
+   * with repository services. This method provides lower-level resolution of
+   * services, returning raw URIs.
+   *
+   * @param PhabricatorUser Viewing user.
+   * @param bool `true` to throw if a remote URI would be returned.
+   * @param list<string> List of allowable protocols.
+   * @return string|null URI, or `null` for local repositories.
+   */
+  public function getAlmanacServiceURI(
+    PhabricatorUser $viewer,
+    $never_proxy,
+    array $protocols) {
+
+    $service_phid = $this->getAlmanacServicePHID();
+    if (!$service_phid) {
+      // No service, so this is a local repository.
+      return null;
+    }
+
+    $service = id(new AlmanacServiceQuery())
+      ->setViewer(PhabricatorUser::getOmnipotentUser())
+      ->withPHIDs(array($service_phid))
+      ->needBindings(true)
+      ->executeOne();
+    if (!$service) {
+      throw new Exception(
+        pht(
+          'The Alamnac service for this repository is invalid or could not '.
+          'be loaded.'));
+    }
+
+    $service_type = $service->getServiceType();
+    if (!($service_type instanceof AlmanacClusterRepositoryServiceType)) {
+      throw new Exception(
+        pht(
+          'The Alamnac service for this repository does not have the correct '.
+          'service type.'));
+    }
+
+    $bindings = $service->getBindings();
+    if (!$bindings) {
+      throw new Exception(
+        pht(
+          'The Alamanc service for this repository is not bound to any '.
+          'interfaces.'));
+    }
+
+    $local_device = AlmanacKeys::getDeviceID();
+
+    if ($never_proxy && !$local_device) {
+      throw new Exception(
+        pht(
+          'Unable to handle proxied service request. This device is not '.
+          'registered, so it can not identify local services. Register '.
+          'this device before sending requests here.'));
+    }
+
+    $protocol_map = array_fuse($protocols);
+
+    $uris = array();
+    foreach ($bindings as $binding) {
+      $iface = $binding->getInterface();
+
+      // If we're never proxying this and it's locally satisfiable, return
+      // `null` to tell the caller to handle it locally. If we're allowed to
+      // proxy, we skip this check and may proxy the request to ourselves.
+      // (That proxied request will end up here with proxying forbidden,
+      // return `null`, and then the request will actually run.)
+
+      if ($local_device && $never_proxy) {
+        if ($iface->getDevice()->getName() == $local_device) {
+          return null;
+        }
+      }
+
+      $protocol = $binding->getAlmanacPropertyValue('protocol');
+      if ($protocol === null) {
+        $protocol = 'https';
+      }
+
+      if (empty($protocol_map[$protocol])) {
+        continue;
+      }
+
+      $uris[] = $protocol.'://'.$iface->renderDisplayAddress().'/';
+    }
+
+    if (!$uris) {
+      throw new Exception(
+        pht(
+          'The Almanac service for this repository is not bound to any '.
+          'interfaces which support the required protocols (%s).',
+          implode(', ', $protocols)));
+    }
+
+    if ($never_proxy) {
+      throw new Exception(
+        pht(
+          'Refusing to proxy a repository request from a cluster host. '.
+          'Cluster hosts must correctly route their intracluster requests.'));
+    }
+
+    shuffle($uris);
+    return head($uris);
+  }
+
+
+  /**
+   * Build a new Conduit client in order to make a service call to this
+   * repository.
+   *
+   * If the repository is hosted locally, this method may return `null`. The
+   * caller should use `ConduitCall` or other local logic to complete the
+   * request.
+   *
+   * By default, we will return a @{class:ConduitClient} for any repository with
+   * a service, even if that service is on the current device.
+   *
+   * We do this because this configuration does not make very much sense in a
+   * production context, but is very common in a test/development context
+   * (where the developer's machine is both the web host and the repository
+   * service). By proxying in development, we get more consistent behavior
+   * between development and production, and don't have a major untested
+   * codepath.
+   *
+   * The `$never_proxy` parameter can be used to prevent this local proxying.
+   * If the flag is passed:
+   *
+   *   - The method will return `null` (implying a local service call)
+   *     if the repository service is hosted on the current device.
+   *   - The method will throw if it would need to return a client.
+   *
+   * This is used to prevent loops in Conduit: the first request will proxy,
+   * even in development, but the second request will be identified as a
+   * cluster request and forced not to proxy.
+   *
+   * For lower-level service resolution, see @{method:getAlmanacServiceURI}.
+   *
+   * @param PhabricatorUser Viewing user.
+   * @param bool `true` to throw if a client would be returned.
+   * @return ConduitClient|null Client, or `null` for local repositories.
+   */
+  public function newConduitClient(
+    PhabricatorUser $viewer,
+    $never_proxy = false) {
+
+    $uri = $this->getAlmanacServiceURI(
+      $viewer,
+      $never_proxy,
+      array(
+        'http',
+        'https',
+      ));
+    if ($uri === null) {
+      return null;
+    }
+
+    $domain = id(new PhutilURI(PhabricatorEnv::getURI('/')))->getDomain();
+
+    $client = id(new ConduitClient($uri))
+      ->setHost($domain);
+
+    if ($viewer->isOmnipotent()) {
+      // If the caller is the omnipotent user (normally, a daemon), we will
+      // sign the request with this host's asymmetric keypair.
+
+      $public_path = AlmanacKeys::getKeyPath('device.pub');
+      try {
+        $public_key = Filesystem::readFile($public_path);
+      } catch (Exception $ex) {
+        throw new PhutilAggregateException(
+          pht(
+            'Unable to read device public key while attempting to make '.
+            'authenticated method call within the Phabricator cluster. '.
+            'Use `bin/almanac register` to register keys for this device. '.
+            'Exception: %s',
+            $ex->getMessage()),
+          array($ex));
+      }
+
+      $private_path = AlmanacKeys::getKeyPath('device.key');
+      try {
+        $private_key = Filesystem::readFile($private_path);
+        $private_key = new PhutilOpaqueEnvelope($private_key);
+      } catch (Exception $ex) {
+        throw new PhutilAggregateException(
+          pht(
+            'Unable to read device private key while attempting to make '.
+            'authenticated method call within the Phabricator cluster. '.
+            'Use `bin/almanac register` to register keys for this device. '.
+            'Exception: %s',
+            $ex->getMessage()),
+          array($ex));
+      }
+
+      $client->setSigningKeys($public_key, $private_key);
+    } else {
+      // If the caller is a normal user, we generate or retrieve a cluster
+      // API token.
+
+      $token = PhabricatorConduitToken::loadClusterTokenForUser($viewer);
+      if ($token) {
+        $client->setConduitToken($token->getToken());
+      }
+    }
+
+    return $client;
+  }
+
+
+/* -(  PhabricatorApplicationTransactionInterface  )------------------------- */
+
+
+  public function getApplicationTransactionEditor() {
+    return new PhabricatorRepositoryEditor();
+  }
+
+  public function getApplicationTransactionObject() {
+    return $this;
+  }
+
+  public function getApplicationTransactionTemplate() {
+    return new PhabricatorRepositoryTransaction();
+  }
+
+  public function willRenderTimeline(
+    PhabricatorApplicationTransactionView $timeline,
+    AphrontRequest $request) {
+
+    return $timeline;
   }
 
 

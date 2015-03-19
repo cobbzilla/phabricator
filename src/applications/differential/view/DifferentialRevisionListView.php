@@ -10,6 +10,7 @@ final class DifferentialRevisionListView extends AphrontView {
   private $highlightAge;
   private $header;
   private $noDataString;
+  private $noBox;
 
   public function setNoDataString($no_data_string) {
     $this->noDataString = $no_data_string;
@@ -29,6 +30,11 @@ final class DifferentialRevisionListView extends AphrontView {
 
   public function setHighlightAge($bool) {
     $this->highlightAge = $bool;
+    return $this;
+  }
+
+  public function setNoBox($box) {
+    $this->noBox = $box;
     return $this;
   }
 
@@ -121,13 +127,12 @@ final class DifferentialRevisionListView extends AphrontView {
       }
 
       $item->setObjectName('D'.$revision->getID());
-      $item->setHeader(phutil_tag('a',
-        array('href' => '/D'.$revision->getID()),
-        $revision->getTitle()));
+      $item->setHeader($revision->getTitle());
+      $item->setHref('/D'.$revision->getID());
 
       if (isset($icons['draft'])) {
         $draft = id(new PHUIIconView())
-          ->setIconFont('fa-comment-o lightgreytext')
+          ->setIconFont('fa-comment yellow')
           ->addSigil('has-tooltip')
           ->setMetadata(
             array(
@@ -180,8 +185,17 @@ final class DifferentialRevisionListView extends AphrontView {
       $list->addItem($item);
     }
 
-    $list->setHeader($this->header);
     $list->setNoDataString($this->noDataString);
+
+
+    if ($this->header && !$this->noBox) {
+      $list->setFlush(true);
+      $list = id(new PHUIObjectBoxView())
+        ->setHeaderText($this->header)
+        ->appendChild($list);
+    } else {
+      $list->setHeader($this->header);
+    }
 
     return $list;
   }

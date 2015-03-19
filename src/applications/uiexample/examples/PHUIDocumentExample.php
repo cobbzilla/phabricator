@@ -48,7 +48,7 @@ final class PHUIDocumentExample extends PhabricatorUIExample {
       ->setIcon('fa-plus-circle')
       ->setType(PHUIListItemView::TYPE_LINK);
 
-    $divider = id(new PHUIListItemView)
+    $divider = id(new PHUIListItemView())
       ->setType(PHUIListItemView::TYPE_DIVIDER);
 
     $header = id(new PHUIHeaderView())
@@ -103,7 +103,7 @@ final class PHUIDocumentExample extends PhabricatorUIExample {
       ->addMenuItem($item1);
 
     $home = id(new PHUIListItemView())
-      ->setIcon('home')
+      ->setIcon('fa-home')
       ->setHref('#')
       ->setType(PHUIListItemView::TYPE_ICON);
 
@@ -189,9 +189,11 @@ final class PHUIDocumentExample extends PhabricatorUIExample {
      $content = new PHUIDocumentView();
      $content->setBook('Book or Project Name', 'Article');
      $content->setHeader($header);
+     $content->setFluid(true);
      $content->setTopNav($topnav);
      $content->setSidenav($sidenav);
      $content->appendChild($document);
+     $content->setFontKit(PHUIDocumentView::FONT_SOURCE_SANS);
 
     return $content;
   }

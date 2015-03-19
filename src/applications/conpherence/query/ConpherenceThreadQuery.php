@@ -7,6 +7,7 @@ final class ConpherenceThreadQuery
 
   private $phids;
   private $ids;
+  private $isRoom;
   private $needWidgetData;
   private $needTransactions;
   private $needParticipantCache;
@@ -42,6 +43,11 @@ final class ConpherenceThreadQuery
 
   public function withPHIDs(array $phids) {
     $this->phids = $phids;
+    return $this;
+  }
+
+  public function withIsRoom($bool) {
+    $this->isRoom = $bool;
     return $this;
   }
 
@@ -105,18 +111,25 @@ final class ConpherenceThreadQuery
 
     $where[] = $this->buildPagingClause($conn_r);
 
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
         $conn_r,
         'id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
         $conn_r,
         'phid IN (%Ls)',
         $this->phids);
+    }
+
+    if ($this->isRoom !== null) {
+      $where[] = qsprintf(
+        $conn_r,
+        'isRoom = %d',
+        (int)$this->isRoom);
     }
 
     return $this->formatWhereClause($where);
@@ -200,7 +213,7 @@ final class ConpherenceThreadQuery
   }
 
   private function loadFilePHIDs(array $conpherences) {
-    $edge_type = PhabricatorEdgeConfig::TYPE_OBJECT_HAS_FILE;
+    $edge_type = PhabricatorObjectHasFileEdgeType::EDGECONST;
     $file_edges = id(new PhabricatorEdgeQuery())
       ->withSourcePHIDs(array_keys($conpherences))
       ->withEdgeTypes(array($edge_type))
@@ -279,7 +292,7 @@ final class ConpherenceThreadQuery
       $widget_data = array(
         'statuses' => $statuses,
         'files' => $conpherence_files,
-        'files_authors' => $files_authors
+        'files_authors' => $files_authors,
       );
       $conpherence->attachWidgetData($widget_data);
     }

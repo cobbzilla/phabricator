@@ -27,6 +27,7 @@
 final class PhabricatorRepositoryPullLocalDaemon
   extends PhabricatorDaemon {
 
+  private $statusMessageCursor = 0;
 
 /* -(  Pulling Repositories  )----------------------------------------------- */
 
@@ -34,7 +35,7 @@ final class PhabricatorRepositoryPullLocalDaemon
   /**
    * @task pull
    */
-  public function run() {
+  protected function run() {
     $argv = $this->getArgv();
     array_unshift($argv, __CLASS__);
     $args = new PhutilArgumentParser($argv);
@@ -76,7 +77,7 @@ final class PhabricatorRepositoryPullLocalDaemon
 
       // If any repositories have the NEEDS_UPDATE flag set, pull them
       // as soon as possible.
-      $need_update_messages = $this->loadRepositoryUpdateMessages();
+      $need_update_messages = $this->loadRepositoryUpdateMessages(true);
       foreach ($need_update_messages as $message) {
         $repo = idx($pullable, $message->getRepositoryID());
         if (!$repo) {
@@ -255,12 +256,40 @@ final class PhabricatorRepositoryPullLocalDaemon
 
 
   /**
+   * Check for repositories that should be updated immediately.
+   *
+   * With the `$consume` flag, an internal cursor will also be incremented so
+   * that these messages are not returned by subsequent calls.
+   *
+   * @param bool Pass `true` to consume these messages, so the process will
+   *   not see them again.
+   * @return list<wild> Pending update messages.
+   *
    * @task pull
    */
-  private function loadRepositoryUpdateMessages() {
+  private function loadRepositoryUpdateMessages($consume = false) {
     $type_need_update = PhabricatorRepositoryStatusMessage::TYPE_NEEDS_UPDATE;
-    return id(new PhabricatorRepositoryStatusMessage())
-      ->loadAllWhere('statusType = %s', $type_need_update);
+    $messages = id(new PhabricatorRepositoryStatusMessage())->loadAllWhere(
+      'statusType = %s AND id > %d',
+      $type_need_update,
+      $this->statusMessageCursor);
+
+    // Keep track of messages we've seen so that we don't load them again.
+    // If we reload messages, we can get stuck a loop if we have a failing
+    // repository: we update immediately in response to the message, but do
+    // not clear the message because the update does not succeed. We then
+    // immediately retry. Instead, messages are only permitted to trigger
+    // an immediate update once.
+
+    if ($consume) {
+      foreach ($messages as $message) {
+        $this->statusMessageCursor = max(
+          $this->statusMessageCursor,
+          $message->getID());
+      }
+    }
+
+    return $messages;
   }
 
 
@@ -345,55 +374,16 @@ final class PhabricatorRepositoryPullLocalDaemon
       phlog($stderr_msg);
     }
 
-    $sleep_for = (int)$repository->getDetail('pull-frequency', $min_sleep);
+    $smart_wait = $repository->loadUpdateInterval($min_sleep);
 
-    // Smart wait: pull rarely used repositories less frequently. Find the
-    // most recent commit which is older than the current time (this keeps us
-    // from spinning on repositories with a silly commit post-dated to some time
-    // in 2037), and adjust how frequently we pull based on how frequently this
-    // repository updates.
+    $this->log(
+      pht(
+        'Based on activity in repository "%s", considering a wait of %s '.
+        'seconds before update.',
+        $repository->getMonogram(),
+        new PhutilNumber($smart_wait)));
 
-    $table = id(new PhabricatorRepositoryCommit());
-    $last_commit = queryfx_one(
-      $table->establishConnection('w'),
-      'SELECT epoch FROM %T
-        WHERE repositoryID = %d AND epoch <= %d
-        ORDER BY epoch DESC LIMIT 1',
-      $table->getTableName(),
-      $repository->getID(),
-      time() + $min_sleep);
-    if ($last_commit) {
-      $time_since_commit = (time() + $min_sleep) - $last_commit['epoch'];
-
-      // Wait 0.5% of the time since the last commit before we pull. This gives
-      // us these wait times:
-      //
-      // 50 minutes or less: 15 seconds
-      // about 3 hours: 1 minute
-      // about 16 hours: 5 minutes
-      // about 2 days: 15 minutes
-      // 50 days or more: 6 hours
-
-      $smart_wait = ($time_since_commit / 200);
-      $smart_wait = min($smart_wait, phutil_units('6 hours in seconds'));
-
-      $this->log(
-        pht(
-          'Last commit to repository "%s" was %s seconds ago; considering '.
-          'a wait of %s seconds before update.',
-          $repository->getMonogram(),
-          new PhutilNumber($time_since_commit),
-          new PhutilNumber($smart_wait)));
-
-      $smart_wait = max(15, $smart_wait);
-      $sleep_for = max($smart_wait, $sleep_for);
-    }
-
-    if ($sleep_for < $min_sleep) {
-      $sleep_for = $min_sleep;
-    }
-
-    return time() + $sleep_for;
+    return time() + $smart_wait;
   }
 
 

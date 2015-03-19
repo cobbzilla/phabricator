@@ -102,7 +102,7 @@ abstract class PhabricatorTestCase extends ArcanistPhutilTestCase {
       'phabricator.uninstalled-applications',
       array());
     $this->env->overrideEnvConfig(
-      'phabricator.show-beta-applications',
+      'phabricator.show-prototypes',
       true);
 
     // Reset application settings to defaults, particularly policies.
@@ -116,8 +116,12 @@ abstract class PhabricatorTestCase extends ArcanistPhutilTestCase {
       'notification.enabled',
       false);
 
-    // TODO: Remove this when we remove "releeph.installed".
-    $this->env->overrideEnvConfig('releeph.installed', true);
+    $this->env->overrideEnvConfig(
+      'phabricator.base-uri',
+      'http://phabricator.example.com');
+
+    // Tests do their own stubbing/voiding for events.
+    $this->env->overrideEnvConfig('phabricator.silent', false);
   }
 
   protected function didRunTests() {
@@ -214,6 +218,13 @@ abstract class PhabricatorTestCase extends ArcanistPhutilTestCase {
       throw new Exception(
         'Executing test code outside of test execution! This code path can '.
         'only be run during unit tests.');
+    }
+  }
+
+  protected function requireBinaryForTest($binary) {
+    if (!Filesystem::binaryExists($binary)) {
+      $this->assertSkipped(
+        pht('No binary "%s" found on this system, skipping test.', $binary));
     }
   }
 

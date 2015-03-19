@@ -11,6 +11,10 @@ final class PhabricatorFileQuery
   private $dateCreatedAfter;
   private $dateCreatedBefore;
   private $contentHashes;
+  private $minLength;
+  private $maxLength;
+  private $names;
+  private $isPartial;
 
   public function withIDs(array $ids) {
     $this->ids = $ids;
@@ -89,6 +93,22 @@ final class PhabricatorFileQuery
     return $this;
   }
 
+  public function withLengthBetween($min, $max) {
+    $this->minLength = $min;
+    $this->maxLength = $max;
+    return $this;
+  }
+
+  public function withNames(array $names) {
+    $this->names = $names;
+    return $this;
+  }
+
+  public function withIsPartial($partial) {
+    $this->isPartial = $partial;
+    return $this;
+  }
+
   public function showOnlyExplicitUploads($explicit_uploads) {
     $this->explicitUploads = $explicit_uploads;
     return $this;
@@ -116,10 +136,10 @@ final class PhabricatorFileQuery
     // We need to load attached objects to perform policy checks for files.
     // First, load the edges.
 
-    $edge_type = PhabricatorEdgeConfig::TYPE_FILE_HAS_OBJECT;
-    $phids = mpull($files, 'getPHID');
+    $edge_type = PhabricatorFileHasObjectEdgeType::EDGECONST;
+    $file_phids = mpull($files, 'getPHID');
     $edges = id(new PhabricatorEdgeQuery())
-      ->withSourcePHIDs($phids)
+      ->withSourcePHIDs($file_phids)
       ->withEdgeTypes(array($edge_type))
       ->execute();
 
@@ -131,6 +151,21 @@ final class PhabricatorFileQuery
         $object_phids[$phid] = true;
       }
     }
+
+    // If this file is a transform of another file, load that file too. If you
+    // can see the original file, you can see the thumbnail.
+
+    // TODO: It might be nice to put this directly on PhabricatorFile and remove
+    // the PhabricatorTransformedFile table, which would be a little simpler.
+
+    $xforms = id(new PhabricatorTransformedFile())->loadAllWhere(
+      'transformedPHID IN (%Ls)',
+      $file_phids);
+    $xform_phids = mpull($xforms, 'getOriginalPHID', 'getTransformedPHID');
+    foreach ($xform_phids as $derived_phid => $original_phid) {
+      $object_phids[$original_phid] = true;
+    }
+
     $object_phids = array_keys($object_phids);
 
     // Now, load the objects.
@@ -156,6 +191,27 @@ final class PhabricatorFileQuery
       $file->attachObjects($file_objects);
     }
 
+    foreach ($files as $key => $file) {
+      $original_phid = idx($xform_phids, $file->getPHID());
+      if ($original_phid == PhabricatorPHIDConstants::PHID_VOID) {
+        // This is a special case for builtin files, which are handled
+        // oddly.
+        $original = null;
+      } else if ($original_phid) {
+        $original = idx($objects, $original_phid);
+        if (!$original) {
+          // If the viewer can't see the original file, also prevent them from
+          // seeing the transformed file.
+          $this->didRejectResult($file);
+          unset($files[$key]);
+          continue;
+        }
+      } else {
+        $original = null;
+      }
+      $file->attachOriginalFile($original);
+    }
+
     return $files;
   }
 
@@ -177,34 +233,34 @@ final class PhabricatorFileQuery
 
     $where[] = $this->buildPagingClause($conn_r);
 
-    if ($this->ids) {
+    if ($this->ids !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.id IN (%Ld)',
         $this->ids);
     }
 
-    if ($this->phids) {
+    if ($this->phids !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.phid IN (%Ls)',
         $this->phids);
     }
 
-    if ($this->authorPHIDs) {
+    if ($this->authorPHIDs !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.authorPHID IN (%Ls)',
         $this->authorPHIDs);
     }
 
-    if ($this->explicitUploads) {
+    if ($this->explicitUploads !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.isExplicitUpload = true');
     }
 
-    if ($this->transforms) {
+    if ($this->transforms !== null) {
       $clauses = array();
       foreach ($this->transforms as $transform) {
         if ($transform['transform'] === true) {
@@ -223,25 +279,53 @@ final class PhabricatorFileQuery
       $where[] = qsprintf($conn_r, '(%Q)', implode(') OR (', $clauses));
     }
 
-    if ($this->dateCreatedAfter) {
+    if ($this->dateCreatedAfter !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.dateCreated >= %d',
         $this->dateCreatedAfter);
     }
 
-    if ($this->dateCreatedBefore) {
+    if ($this->dateCreatedBefore !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.dateCreated <= %d',
         $this->dateCreatedBefore);
     }
 
-    if ($this->contentHashes) {
+    if ($this->contentHashes !== null) {
       $where[] = qsprintf(
         $conn_r,
         'f.contentHash IN (%Ls)',
         $this->contentHashes);
+    }
+
+    if ($this->minLength !== null) {
+      $where[] = qsprintf(
+        $conn_r,
+        'byteSize >= %d',
+        $this->minLength);
+    }
+
+    if ($this->maxLength !== null) {
+      $where[] = qsprintf(
+        $conn_r,
+        'byteSize <= %d',
+        $this->maxLength);
+    }
+
+    if ($this->names !== null) {
+      $where[] = qsprintf(
+        $conn_r,
+        'name in (%Ls)',
+        $this->names);
+    }
+
+    if ($this->isPartial !== null) {
+      $where[] = qsprintf(
+        $conn_r,
+        'isPartial = %d',
+        (int)$this->isPartial);
     }
 
     return $this->formatWhereClause($where);

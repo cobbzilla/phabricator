@@ -11,6 +11,7 @@ final class PHUIActionHeaderView extends AphrontView {
   const HEADER_WHITE = 'white';
 
   private $headerTitle;
+  private $headerSubtitle;
   private $headerHref;
   private $headerIcon;
   private $headerSigils = array();
@@ -39,6 +40,11 @@ final class PHUIActionHeaderView extends AphrontView {
     return $this;
   }
 
+  public function setHeaderSubtitle($subtitle) {
+    $this->headerSubtitle = $subtitle;
+    return $this;
+  }
+
   public function setHeaderHref($href) {
     $this->headerHref = $href;
     return $this;
@@ -49,8 +55,8 @@ final class PHUIActionHeaderView extends AphrontView {
     return $this;
   }
 
-  public function setHeaderIcon($minicon) {
-    $this->headerIcon = $minicon;
+  public function setHeaderIcon(PHUIIconView $icon) {
+    $this->headerIcon = $icon;
     return $this;
   }
 
@@ -99,7 +105,7 @@ final class PHUIActionHeaderView extends AphrontView {
         $action_list[] = phutil_tag(
           'li',
             array(
-            'class' => 'phui-action-header-icon-item'
+            'class' => 'phui-action-header-icon-item',
           ),
           $action);
       }
@@ -109,20 +115,14 @@ final class PHUIActionHeaderView extends AphrontView {
       $action_list[] = phutil_tag(
         'li',
           array(
-          'class' => 'phui-action-header-icon-item'
+          'class' => 'phui-action-header-icon-item',
         ),
         $this->tag);
     }
 
     $header_icon = null;
     if ($this->headerIcon) {
-      require_celerity_resource('sprite-minicons-css');
-      $header_icon = phutil_tag(
-        'span',
-          array(
-            'class' => 'sprite-minicons minicons-'.$this->headerIcon
-          ),
-          '');
+      $header_icon = $this->headerIcon;
     }
 
     $header_title = $this->headerTitle;
@@ -132,26 +132,38 @@ final class PHUIActionHeaderView extends AphrontView {
           array(
             'class' => 'phui-action-header-link',
             'href' => $this->headerHref,
-            'sigil' => implode(' ', $this->headerSigils)
+            'sigil' => implode(' ', $this->headerSigils),
           ),
           $this->headerTitle);
+    }
+
+    $header_subtitle = null;
+    if ($this->headerSubtitle) {
+      $header_subtitle = phutil_tag(
+        'span',
+          array(
+            'class' => 'phui-action-header-subtitle',
+          ),
+          $this->headerSubtitle);
     }
 
     $header = phutil_tag(
       'h3',
         array(
-          'class' => 'phui-action-header-title'
+          'class' => 'phui-action-header-title',
         ),
       array(
         $header_icon,
-        $header_title));
+        $header_title,
+        $header_subtitle,
+      ));
 
     $icons = '';
     if (nonempty($action_list)) {
       $icons = phutil_tag(
         'ul',
           array(
-            'class' => 'phui-action-header-icon-list'
+            'class' => 'phui-action-header-icon-list',
           ),
           $action_list);
     }
@@ -159,11 +171,11 @@ final class PHUIActionHeaderView extends AphrontView {
     return phutil_tag(
       'div',
         array(
-          'class' => implode(' ', $classes)
+          'class' => implode(' ', $classes),
         ),
         array(
           $header,
-          $icons
+          $icons,
         ));
   }
 }

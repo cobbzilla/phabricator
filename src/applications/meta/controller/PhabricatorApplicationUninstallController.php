@@ -27,21 +27,21 @@ final class PhabricatorApplicationUninstallController
 
     $view_uri = $this->getApplicationURI('view/'.$this->application);
 
-    $beta_enabled = PhabricatorEnv::getEnvConfig(
-      'phabricator.show-beta-applications');
+    $prototypes_enabled = PhabricatorEnv::getEnvConfig(
+      'phabricator.show-prototypes');
 
     $dialog = id(new AphrontDialogView())
                ->setUser($user)
                ->addCancelButton($view_uri);
 
-    if ($selected->isBeta() && !$beta_enabled) {
+    if ($selected->isPrototype() && !$prototypes_enabled) {
       $dialog
-        ->setTitle(pht('Beta Applications Not Enabled'))
+        ->setTitle(pht('Prototypes Not Enabled'))
         ->appendChild(
           pht(
-            'To manage beta applications, enable them by setting %s in your '.
+            'To manage prototypes, enable them by setting %s in your '.
             'Phabricator configuration.',
-            phutil_tag('tt', array(), 'phabricator.show-beta-applications')));
+            phutil_tag('tt', array(), 'phabricator.show-prototypes')));
       return id(new AphrontDialogResponse())->setDialog($dialog);
     }
 
@@ -63,10 +63,28 @@ final class PhabricatorApplicationUninstallController
       }
     } else {
       if ($selected->canUninstall()) {
-        $dialog->setTitle('Confirmation')
-               ->appendChild(
-                 'Really Uninstall '.$selected->getName().' application?')
-               ->addSubmitButton('Uninstall');
+        $dialog->setTitle(pht('Really Uninstall Application?'));
+
+        if ($selected instanceof PhabricatorHomeApplication) {
+          $dialog
+            ->appendParagraph(
+              pht(
+                'Are you absolutely certain you want to uninstall the Home '.
+                'application?'))
+            ->appendParagraph(
+              pht(
+                'This is very unusual and will leave you without any '.
+                'content on the Phabricator home page. You should only '.
+                'do this if you are certain you know what you are doing.'))
+            ->addSubmitButton(pht('Completely Break Phabricator'));
+        } else {
+          $dialog
+            ->appendParagraph(
+              pht(
+                'Really uninstall the %s application?',
+                $selected->getName()))
+            ->addSubmitButton(pht('Uninstall'));
+        }
       } else {
         $dialog->setTitle('Information')
                ->appendChild(
@@ -90,7 +108,10 @@ final class PhabricatorApplicationUninstallController
     }
 
     PhabricatorConfigEditor::storeNewValue(
-     $config_entry, $list, $this->getRequest());
+      $this->getRequest()->getUser(),
+      $config_entry,
+      $list,
+      PhabricatorContentSource::newFromRequest($this->getRequest()));
   }
 
 }

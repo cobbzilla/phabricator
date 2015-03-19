@@ -25,14 +25,19 @@ abstract class PhabricatorMailingListsController extends PhabricatorController {
     return $this->buildSideNavView(true)->getMenu();
   }
 
-  public function buildApplicationCrumbs() {
+  protected function buildApplicationCrumbs() {
     $crumbs = parent::buildApplicationCrumbs();
+
+    $can_manage = $this->hasApplicationCapability(
+      PhabricatorMailingListsManageCapability::CAPABILITY);
 
     $crumbs->addAction(
       id(new PHUIListItemView())
         ->setName(pht('Create List'))
         ->setHref($this->getApplicationURI('edit/'))
-        ->setIcon('fa-plus-square'));
+        ->setIcon('fa-plus-square')
+        ->setDisabled(!$can_manage)
+        ->setWorkflow(!$can_manage));
 
     return $crumbs;
   }

@@ -18,10 +18,44 @@ abstract class AphrontResponse {
     return $this->request;
   }
 
+
+/* -(  Content  )------------------------------------------------------------ */
+
+
+  public function getContentIterator() {
+    return array($this->buildResponseString());
+  }
+
+  public function buildResponseString() {
+    throw new PhutilMethodNotImplementedException();
+  }
+
+
+/* -(  Metadata  )----------------------------------------------------------- */
+
+
   public function getHeaders() {
     $headers = array();
     if (!$this->frameable) {
       $headers[] = array('X-Frame-Options', 'Deny');
+    }
+
+    if ($this->getRequest() && $this->getRequest()->isHTTPS()) {
+      $hsts_key = 'security.strict-transport-security';
+      $use_hsts = PhabricatorEnv::getEnvConfig($hsts_key);
+      if ($use_hsts) {
+        $duration = phutil_units('365 days in seconds');
+      } else {
+        // If HSTS has been disabled, tell browsers to turn it off. This may
+        // not be effective because we can only disable it over a valid HTTPS
+        // connection, but it best represents the configured intent.
+        $duration = 0;
+      }
+
+      $headers[] = array(
+        'Strict-Transport-Security',
+        "max-age={$duration}; includeSubdomains; preload",
+      );
     }
 
     return $headers;
@@ -109,23 +143,28 @@ abstract class AphrontResponse {
     if ($this->cacheable) {
       $headers[] = array(
         'Expires',
-        $this->formatEpochTimestampForHTTPHeader(time() + $this->cacheable));
+        $this->formatEpochTimestampForHTTPHeader(time() + $this->cacheable),
+      );
     } else {
       $headers[] = array(
         'Cache-Control',
-        'private, no-cache, no-store, must-revalidate');
+        'private, no-cache, no-store, must-revalidate',
+      );
       $headers[] = array(
         'Pragma',
-        'no-cache');
+        'no-cache',
+      );
       $headers[] = array(
         'Expires',
-        'Sat, 01 Jan 2000 00:00:00 GMT');
+        'Sat, 01 Jan 2000 00:00:00 GMT',
+      );
     }
 
     if ($this->lastModified) {
       $headers[] = array(
         'Last-Modified',
-        $this->formatEpochTimestampForHTTPHeader($this->lastModified));
+        $this->formatEpochTimestampForHTTPHeader($this->lastModified),
+      );
     }
 
     // IE has a feature where it may override an explicit Content-Type
@@ -142,6 +181,8 @@ abstract class AphrontResponse {
     return gmdate('D, d M Y H:i:s', $epoch_timestamp).' GMT';
   }
 
-  abstract public function buildResponseString();
+  public function didCompleteWrite($aborted) {
+    return;
+  }
 
 }

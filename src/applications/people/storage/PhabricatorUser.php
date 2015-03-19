@@ -9,7 +9,8 @@ final class PhabricatorUser
     PhutilPerson,
     PhabricatorPolicyInterface,
     PhabricatorCustomFieldInterface,
-    PhabricatorDestructibleInterface {
+    PhabricatorDestructibleInterface,
+    PhabricatorSSHPublicKeyInterface {
 
   const SESSION_TABLE = 'phabricator_session';
   const NAMETOKEN_TABLE = 'user_nametoken';
@@ -49,6 +50,8 @@ final class PhabricatorUser
   private $alternateCSRFString = self::ATTACHABLE;
   private $session = self::ATTACHABLE;
 
+  private $authorities = array();
+
   protected function readField($field) {
     switch ($field) {
       case 'timezoneIdentifier':
@@ -81,6 +84,10 @@ final class PhabricatorUser
    * @return bool True if this is a standard, usable account.
    */
   public function isUserActivated() {
+    if ($this->isOmnipotent()) {
+      return true;
+    }
+
     if ($this->getIsDisabled()) {
       return false;
     }
@@ -110,9 +117,47 @@ final class PhabricatorUser
     return $this->getPHID() && (phid_get_type($this->getPHID()) == $type_user);
   }
 
-  public function getConfiguration() {
+  protected function getConfiguration() {
     return array(
       self::CONFIG_AUX_PHID => true,
+      self::CONFIG_COLUMN_SCHEMA => array(
+        'userName' => 'sort64',
+        'realName' => 'text128',
+        'sex' => 'text4?',
+        'translation' => 'text64?',
+        'passwordSalt' => 'text32?',
+        'passwordHash' => 'text128?',
+        'profileImagePHID' => 'phid?',
+        'consoleEnabled' => 'bool',
+        'consoleVisible' => 'bool',
+        'consoleTab' => 'text64',
+        'conduitCertificate' => 'text255',
+        'isSystemAgent' => 'bool',
+        'isDisabled' => 'bool',
+        'isAdmin' => 'bool',
+        'timezoneIdentifier' => 'text255',
+        'isEmailVerified' => 'uint32',
+        'isApproved' => 'uint32',
+        'accountSecret' => 'bytes64',
+        'isEnrolledInMultiFactor' => 'bool',
+      ),
+      self::CONFIG_KEY_SCHEMA => array(
+        'key_phid' => null,
+        'phid' => array(
+          'columns' => array('phid'),
+          'unique' => true,
+        ),
+        'userName' => array(
+          'columns' => array('userName'),
+          'unique' => true,
+        ),
+        'realName' => array(
+          'columns' => array('realName'),
+        ),
+        'key_approved' => array(
+          'columns' => array('isApproved'),
+        ),
+      ),
     ) + parent::getConfiguration();
   }
 
@@ -145,19 +190,6 @@ final class PhabricatorUser
 
   public function getMonogram() {
     return '@'.$this->getUsername();
-  }
-
-  public function getTranslation() {
-    try {
-      if ($this->translation &&
-          class_exists($this->translation) &&
-          is_subclass_of($this->translation, 'PhabricatorTranslation')) {
-        return $this->translation;
-      }
-    } catch (PhutilMissingSymbolException $ex) {
-      return null;
-    }
-    return null;
   }
 
   public function isLoggedIn() {
@@ -407,7 +439,8 @@ final class PhabricatorUser
         PhabricatorUserPreferences::PREFERENCE_TITLES => 'glyph',
         PhabricatorUserPreferences::PREFERENCE_EDITOR => '',
         PhabricatorUserPreferences::PREFERENCE_MONOSPACED => '',
-        PhabricatorUserPreferences::PREFERENCE_DARK_CONSOLE => 0);
+        PhabricatorUserPreferences::PREFERENCE_DARK_CONSOLE => 0,
+      );
 
       $preferences->setPreferences($default_dict);
     }
@@ -639,27 +672,6 @@ EOBODY;
     return $this->assertAttached($this->profileImage);
   }
 
-  public function loadProfileImageURI() {
-    if ($this->profileImage && ($this->profileImage !== self::ATTACHABLE)) {
-      return $this->profileImage;
-    }
-
-    $src_phid = $this->getProfileImagePHID();
-
-    if ($src_phid) {
-      // TODO: (T603) Can we get rid of this entirely and move it to
-      // PeopleQuery with attach/attachable?
-      $file = id(new PhabricatorFile())->loadOneWhere('phid = %s', $src_phid);
-      if ($file) {
-        $this->profileImage = $file->getBestURI();
-        return $this->profileImage;
-      }
-    }
-
-    $this->profileImage = self::getDefaultProfileImageURI();
-    return $this->profileImage;
-  }
-
   public function getFullName() {
     if (strlen($this->getRealName())) {
       return $this->getUsername().' ('.$this->getRealName().')';
@@ -683,6 +695,25 @@ EOBODY;
       'phid = %s',
       $email->getUserPHID());
   }
+
+
+  /**
+   * Grant a user a source of authority, to let them bypass policy checks they
+   * could not otherwise.
+   */
+  public function grantAuthority($authority) {
+    $this->authorities[] = $authority;
+    return $this;
+  }
+
+
+  /**
+   * Get authorities granted to the user.
+   */
+  public function getAuthorities() {
+    return $this->authorities;
+  }
+
 
 /* -(  Multi-Factor Authentication  )---------------------------------------- */
 
@@ -857,8 +888,8 @@ EOBODY;
         $profile->delete();
       }
 
-      $keys = id(new PhabricatorUserSSHKey())->loadAllWhere(
-        'userPHID = %s',
+      $keys = id(new PhabricatorAuthSSHKey())->loadAllWhere(
+        'objectPHID = %s',
         $this->getPHID());
       foreach ($keys as $key) {
         $key->delete();
@@ -888,5 +919,23 @@ EOBODY;
     $this->saveTransaction();
   }
 
+
+/* -(  PhabricatorSSHPublicKeyInterface  )----------------------------------- */
+
+
+  public function getSSHPublicKeyManagementURI(PhabricatorUser $viewer) {
+    if ($viewer->getPHID() == $this->getPHID()) {
+      // If the viewer is managing their own keys, take them to the normal
+      // panel.
+      return '/settings/panel/ssh/';
+    } else {
+      // Otherwise, take them to the administrative panel for this user.
+      return '/settings/'.$this->getID().'/panel/ssh/';
+    }
+  }
+
+  public function getSSHKeyDefaultName() {
+    return 'id_rsa_phabricator';
+  }
 
 }

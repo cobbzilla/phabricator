@@ -19,6 +19,7 @@ final class PhabricatorMacroEditController extends PhabricatorMacroController {
       $macro = id(new PhabricatorMacroQuery())
         ->setViewer($user)
         ->withIDs(array($this->id))
+        ->needFiles(true)
         ->executeOne();
       if (!$macro) {
         return new Aphront404Response();
@@ -66,7 +67,7 @@ final class PhabricatorMacroEditController extends PhabricatorMacroController {
             'isExplicitUpload' => true,
             'canCDN' => true,
           ));
-      } else if ($request->getStr('url')) {
+      } else if ($request->getStr('url') && $can_fetch) {
         try {
           $file = PhabricatorFile::newFromFileDownload(
             $request->getStr('url'),
